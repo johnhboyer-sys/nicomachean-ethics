@@ -77,6 +77,18 @@ shared with other checkouts and can hold a different revision).
    a true first-run empty state.
 3. **Parked on John's taste**: heading style — big titles vs small labels; and
    drag-a-chapter-into-a-Book (he chose "skip for now" once already).
+0a. **The Rust backend has been reviewed** — `workbench-design/security-review-2026-09-07.md`.
+   Nothing is exploitable today and the three claims the capability description
+   makes about Rust-side enforcement all hold. But `run_program` and
+   `assist_run` are an unrestricted local-exec primitive: Rust checks only
+   "absolute and executable", so the `shell:allow-execute` validators beside
+   them are decorative and the CSP is what actually stands between
+   remote-fetched content and code execution. Two fixes landed (CSP directives,
+   and a PATH pin that never reached the child); the Rust items are recorded,
+   not made, because this container cannot compile Rust. **The decision for
+   John: have Rust hold the picker-approved paths, or say plainly in the
+   description that the CSP is the control.**
+
 0. **Read first — a data-loss class found and fixed 2026-09-07, untested in
    the .app** (`claude/weekly-usage-catchup-h8go43`): the first autosave of a
    source import (scheme `source-ref`) never wrote `rowRefs`, so on reopen

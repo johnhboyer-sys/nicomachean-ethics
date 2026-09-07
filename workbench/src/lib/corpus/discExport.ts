@@ -108,7 +108,6 @@ export function buildDiscExportCommand(req: DiscExportRequest): DiscExportComman
     cwd: req.diogenesServer,
     env: {
       [DISC_ENV_VAR[req.corpus]]: req.discDir,
-      ...pathEnv(req.platform),
     },
   };
 }
@@ -142,9 +141,13 @@ export function perlCandidates(platform: Platform, diogenesServer: string): stri
  * Windows a pinned PATH would do more harm than good — the bundled perl needs
  * its own DLLs on PATH — so we pass none and let the child inherit.
  */
-function pathEnv(platform: Platform): Record<string, string> {
-  return platform === 'windows' ? {} : { PATH: '/usr/bin:/bin' };
-}
+// PATH is deliberately NOT set here. It used to be pinned to /usr/bin:/bin
+// "so the run does not depend on the developer's shell", but run_program's
+// ALLOWED_ENV whitelist (src-tauri/src/assist.rs) drops every variable outside
+// TLG_DIR/PHI_DIR/DDP_DIR and then sets PATH itself from augmented_path().
+// So the pin never reached the child: two layers each believed they were
+// hardening PATH and the child got the Rust one regardless. Saying nothing
+// here is honest about who owns it — change augmented_path() to change it.
 
 /** Default install locations, best first. macOS is verified; the others are
  * the documented install paths and should be treated as starting guesses. */

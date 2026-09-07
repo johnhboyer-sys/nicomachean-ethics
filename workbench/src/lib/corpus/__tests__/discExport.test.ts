@@ -51,12 +51,18 @@ describe('buildDiscExportCommand', () => {
     expect(buildDiscExportCommand({ ...base, lineMode: 'prose' }).args).toContain('-Y');
   });
 
-  it('pins a minimal PATH on macOS so the run does not depend on a shell', () => {
-    expect(buildDiscExportCommand(base).env.PATH).toBe('/usr/bin:/bin');
-  });
-
-  it('passes no PATH on Windows, where the bundled perl needs its own', () => {
-    expect(buildDiscExportCommand({ ...base, platform: 'windows' }).env.PATH).toBeUndefined();
+  it('sets no PATH on any platform — Rust owns it', () => {
+    // This used to pin /usr/bin:/bin on macOS "so the run does not depend on
+    // the developer's shell". It never reached the child: run_program's
+    // ALLOWED_ENV whitelist (src-tauri/src/assist.rs) keeps only TLG_DIR,
+    // PHI_DIR and DDP_DIR and sets PATH itself from augmented_path(). Two
+    // layers each believed they were hardening PATH; the Rust one won every
+    // time. The env this builds now carries the disc variable and nothing else.
+    for (const platform of ['macos', 'windows', 'linux'] as const) {
+      const env = buildDiscExportCommand({ ...base, platform }).env;
+      expect(env.PATH).toBeUndefined();
+      expect(Object.keys(env)).toEqual(['TLG_DIR']);
+    }
   });
 
   it('uses a configured perl over any platform guess', () => {
