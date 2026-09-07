@@ -644,14 +644,17 @@ describe('the headword does not belong in a form label', () => {
     // ἀριστεύς, έως, ὁ, dual: ending, then gender, then the label
     expect(rowsOf(entry('<b class="lsj-head">ἀριστεύς</b>, έως, <span class="lsj-gen">ὁ</span>, dual'))[0][0])
       .toBe('dual');
-    // and prose still declines, wherever the run ends: ἀναγκαίη's last clause
-    // is "for", Ἀθήναια's is "older name of the" — neither is vocabulary.
+    // and prose still declines, wherever the run ends: ἅτε's last clause is
+    // "neut. of", Ἀθήναια's is "older name of the" — neither is vocabulary.
+    // (ἀναγκαίη's "for" was the example here until a lead ending in "for"
+    // became a cross-reference outright, with no row at all — see "what does
+    // not open a table" below.)
     // The lead here must stay under 22 characters: past that, the OLD
     // last-comma path cuts regardless of vocabulary (it always has — that is
     // the deferred 228-lead class), and this test is about the new branch.
-    const anank = rowsOf(entry('<b class="lsj-head">ἀναγκαίη</b>, for'));
-    expect(anank[0][0]).not.toBe('for');
-    expect(anank[0][0]).toContain('ἀναγκαίη');
+    const hate = rowsOf(entry('<b class="lsj-head">ἅτε</b>, neut. of'));
+    expect(hate[0][0]).not.toBe('neut. of');
+    expect(hate[0][0]).toContain('ἅτε');
   });
 
   it('cuts the lead when the first form is Greek-with-reference, too', () => {
@@ -742,5 +745,139 @@ describe('the headword does not belong in a form label', () => {
       '<span class="lsj-tns">fut.</span> <span class="lsj-cit">' +
       '<span class="lsj-quote">λέξω</span> <span class="lsj-bibl">Od. 24.224</span></span>'));
     expect(rowsOf(html)[0][0]).toBe('fut.');
+  });
+});
+
+describe('what does not open a table', () => {
+  // The three residual classes HANDOFF-LSJ §0 records: a form inside an
+  // unclosed "(", a lead that ends in "for", and a lone row with no label.
+  // Every fixture carries an lsj-cit (or a Greek span WITH a reference) so
+  // that formAt finds a form and the code under test is reached — an
+  // lsj-greek + lsj-bibl pair that formAt declines makes firstAt -1 and skips
+  // the block, and a test built on one passes whatever the rules say (§4).
+  const rowsOf = (html: string) =>
+    [...html.matchAll(/class="lsj-form-label">([^<]*)<\/span><span class="lsj-form-body">([\s\S]*?)<\/span><\/div>/g)]
+      .map((m) => [m[1].trim(), m[2].replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim()]);
+  const cit = (quote: string, bibl: string) =>
+    `<span class="lsj-cit"><span class="lsj-quote">${quote}</span> <span class="lsj-bibl">${bibl}</span></span>`;
+  const tns = (label: string) => `<span class="lsj-tns">${label}</span>`;
+
+  it('does not open the table on a citation inside a parenthesis', () => {
+    // ἀριθμός: "[ᾰ], (ἀ. τις Pl.), ὁ" — the citation sits inside LSJ's own
+    // bracket, and the row read "ἀριθμός [ᾰ], (" against it. 83 entries opened
+    // their table on a parenthetical. The table opens on the first form
+    // OUTSIDE the bracket, and the bracket stays above it with the headword.
+    const { html } = buildFormsBlock(sanitizeHtml(
+      '<b class="lsj-head">ἀριθμός</b> [<span class="lsj-pron">ᾰ</span>], (' +
+      cit('ἀ. τις', 'Pl. Phd. 104a') + '), <span class="lsj-gen">ὁ</span>: ' +
+      tns('pl.') + ' ' + cit('ἀριθμοί', 'Il. 2.1')));
+    expect(rowsOf(html)).toEqual([['pl.', 'ἀριθμοί Il. 2.1']]);
+    expect(html.indexOf('ἀ. τις')).toBeLessThan(html.indexOf('lsj-form-label'));
+  });
+
+  it('renders the whole preamble as prose when the parenthetical is all there is', () => {
+    // Ἀδράστεια, ἡ, (ἀ- priv., διδράσκω) title of Nemesis, A. Pr. 936: the
+    // etymology is a Greek span with a reference behind it, so it passed for
+    // a form and the entry opened a one-row table labelled "Ἀδράστεια, ἡ, (".
+    // No form, no table — and not a character of the entry lost.
+    const src = sanitizeHtml(
+      '<b class="lsj-head">Ἀδράστεια</b>, <span class="lsj-gen">ἡ</span>, ' +
+      '(<span class="lsj-greek">ἀ-</span> priv., <span class="lsj-greek">διδράσκω</span>) ' +
+      'title of Nemesis, <span class="lsj-bibl">A. Pr. 936</span>');
+    const { html, rows } = buildFormsBlock(src);
+    expect(rows).toBe(0);
+    expect(html).toBe(src);
+  });
+
+  it('carries the parenthesis across the dictionary\'s own separators', () => {
+    // ἀντιτίθημι (pres. part. ἀντιτιθείς Pl.; aor. ἀντέθηκα Hdt.): fut.
+    // ἀντιθήσω. The bracket holds two clauses; the second is no more a row
+    // than the first, though its own segment has no "(" in it. Both stay
+    // above, and the table opens on the future after the ")".
+    const { html } = buildFormsBlock(sanitizeHtml(
+      '<b class="lsj-head">ἀντιτίθημι</b> (' + tns('pres. part.') + ' ' +
+      cit('ἀντιτιθείς', 'Pl. R. 1') + '; ' + tns('aor.') + ' ' + cit('ἀντέθηκα', 'Hdt. 1.1') +
+      '): ' + tns('fut.') + ' ' + cit('ἀντιθήσω', 'Il. 1.1')));
+    expect(rowsOf(html)).toEqual([['fut.', 'ἀντιθήσω Il. 1.1']]);
+    expect(html).toContain('ἀντέθηκα');
+    expect(html.indexOf('ἀντέθηκα')).toBeLessThan(html.indexOf('lsj-form-label'));
+  });
+
+  it('still opens the table after a closed parenthesis, or a stray close', () => {
+    // A bracket that has closed is not an open one — "λέγω (B), fut." keeps
+    // its row — and a ")" with no "(" before it counts for nothing.
+    expect(rowsOf(buildFormsBlock(sanitizeHtml(
+      '<b class="lsj-head">λέγω</b> (B), ' + tns('fut.') + ' ' + cit('λέξω', 'Od. 24.224'))).html)[0][0])
+      .toBe('fut.');
+    expect(rowsOf(buildFormsBlock(sanitizeHtml(
+      '<b class="lsj-head">λέγω</b>), ' + tns('fut.') + ' ' + cit('λέξω', 'Od. 24.224'))).html)[0][0])
+      .toBe('fut.');
+  });
+
+  it('renders a cross-reference — a lead ending in "for" — as prose', () => {
+    // ἀναγκαίη, ἡ, Ep. and Ion, for ἀνάγκη: 29 characters of prose, and the
+    // >22-character path cut at the last comma and labelled the row "for".
+    // A lead ending in "for" is a cross-reference, not a paradigm: no table,
+    // and the entry back whole. 38 entries; none has a form of its own.
+    const anank = sanitizeHtml(
+      '<b class="lsj-head">ἀναγκαίη</b>, <span class="lsj-gen">ἡ</span>, Ep. and Ion, for ' +
+      cit('ἀνάγκη', 'Il. 6.85'));
+    expect(buildFormsBlock(anank)).toEqual({ html: anank, rows: 0 });
+    // διπλός, ή, όν, poet. for διπλοῦς — the same shape after an adjective
+    const diplos = sanitizeHtml(
+      '<b class="lsj-head">διπλός</b>, ή, όν, poet. for ' + cit('διπλοῦς', 'Il. 4.133'));
+    expect(buildFormsBlock(diplos)).toEqual({ html: diplos, rows: 0 });
+    // and the real ἀναγκαίη, whose form is lsj-greek + lsj-bibl: the row it
+    // had was labelled with the whole lead, headword and all
+    const greek = sanitizeHtml(
+      '<b class="lsj-head">ἀναγκαίη</b>, <span class="lsj-gen">ἡ</span>, Ep. and Ion, for ' +
+      '<span class="lsj-greek">ἀνάγκη,</span> <span class="lsj-bibl">Il. 6.85</span>');
+    expect(buildFormsBlock(greek)).toEqual({ html: greek, rows: 0 });
+  });
+
+  it('keeps the cross-reference above a table that follows it', () => {
+    // The cross-reference is the lead, not the entry: where forms follow it,
+    // they are the table and the cross-reference is the prose above them.
+    const { html } = buildFormsBlock(sanitizeHtml(
+      '<b class="lsj-head">ἀναγκαίη</b>, <span class="lsj-gen">ἡ</span>, Ep. and Ion, for ' +
+      cit('ἀνάγκη', 'Il. 6.85') + ': ' + tns('pl.') + ' ' + cit('ἀναγκαῖαι', 'Od. 1.1')));
+    expect(rowsOf(html)).toEqual([['pl.', 'ἀναγκαῖαι Od. 1.1']]);
+    expect(html.indexOf('ἀνάγκη')).toBeLessThan(html.indexOf('lsj-form-label'));
+  });
+
+  it('reads "for" as a cross-reference only at the end of the lead', () => {
+    // "tenses for signf. I" is prose with "for" in the middle; the lead ends
+    // in a label and the row keeps it. And a "for" that ends a LATER clause is
+    // that row's label, not a reason to abandon the table.
+    expect(rowsOf(buildFormsBlock(sanitizeHtml(
+      '<b class="lsj-head">ἔχω</b>, tenses for signf. I, ' + tns('fut.') + ' ' + cit('ἕξω', 'Il. 1.1'))).html)[0][0])
+      .toBe('fut.');
+    const rows = rowsOf(buildFormsBlock(sanitizeHtml(
+      '<b class="lsj-head">εἰμί</b>: ' + tns('impf.') + ' ' + cit('ἦν', 'Il. 1.1') +
+      '; 3 pl. ἔασι, Ep. for ' + cit('εἰσί', 'Il. 2.2'))).html);
+    expect(rows.length).toBe(2);
+    expect(rows[1][1]).toContain('εἰσί');
+  });
+
+  it('does not make a table of one row with no label', () => {
+    // διδάσκαλος, ὁ, cf. ξυμφορὴ γίνεται δ. Hdt.; διδάσκαλοι Pl.: the "cf."
+    // rule took the first citation away as a comparison, and what was left
+    // opened a table on a single row with nothing to label it (ὅλος did the
+    // same). A table whose only row has no label is not a table.
+    const src = sanitizeHtml(
+      '<b class="lsj-head">διδάσκαλος</b>, <span class="lsj-gen">ὁ</span>, cf. ' +
+      cit('ξυμφορὴ γίνεται δ.', 'Hdt. 7.213') + '; ' + cit('διδάσκαλοι', 'Pl. Prt. 1'));
+    expect(buildFormsBlock(src)).toEqual({ html: src, rows: 0 });
+  });
+
+  it('keeps a table of two rows even when one of them is unlabelled', () => {
+    // The rule is about a LONE row: with a second, labelled row the first is
+    // a real, if unlabelled, member of the paradigm.
+    const { html, rows } = buildFormsBlock(sanitizeHtml(
+      '<b class="lsj-head">διδάσκαλος</b>, <span class="lsj-gen">ὁ</span>, cf. ' +
+      cit('ξυμφορὴ γίνεται δ.', 'Hdt. 7.213') + '; ' + cit('διδάσκαλοι', 'Pl. Prt. 1') +
+      '; ' + tns('pl.') + ' ' + cit('διδασκάλους', 'X. Mem. 1')));
+    expect(rows).toBe(2);
+    expect(rowsOf(html).map(([label]) => label)).toEqual(['', 'pl.']);
   });
 });

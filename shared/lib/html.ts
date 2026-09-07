@@ -511,20 +511,57 @@ export function buildFormsBlock(preamble: string): { html: string; rows: number 
   // instead, and opened two entries on an empty head.
   const compared = (seg: string, at: number): boolean =>
     /\bcf\.\s*$/.test(plainText(seg.slice(0, at)));
-  const formAt = (seg: string): number => {
+  // A form inside an unclosed "(" is not a row. ἀριθμός's "[ᾰ], (" and
+  // ἀντιτίθημι's "(pres. part." both opened the table on a parenthetical, and
+  // the row read the headword and an open bracket as its label — 83 entries.
+  // A parenthesis is counted from the START of the preamble, not of the
+  // segment: "(pres. part. X; aor. Y)" is one aside across two segments, and
+  // its second half is no more a row than its first. Plain text only, so a
+  // bracket inside a tag never counts; and ")" never goes below zero, so a
+  // stray close cannot open a table by itself.
+  const parenDepth = (html: string, from: number): number => {
+    let depth = from;
+    for (const ch of plainText(html)) {
+      if (ch === '(') depth += 1;
+      else if (ch === ')') depth = Math.max(0, depth - 1);
+    }
+    return depth;
+  };
+  const depthBefore: number[] = [0];
+  for (const seg of segments) depthBefore.push(parenDepth(seg, depthBefore[depthBefore.length - 1]));
+  const parenthesized = (seg: string, at: number, before: number): boolean =>
+    parenDepth(seg.slice(0, at), before) > 0;
+  const formAt = (seg: string, before = 0): number => {
     const cit = seg.indexOf('<span class="lsj-cit">');
-    if (cit !== -1) return compared(seg, cit) ? -1 : cit;
+    // The whole segment declines for a parenthesized citation, as for "cf.":
+    // whatever follows the ")" in the same clause is prose about the aside.
+    if (cit !== -1) return compared(seg, cit) || parenthesized(seg, cit, before) ? -1 : cit;
     for (
       let greek = seg.indexOf('<span class="lsj-greek');
       greek !== -1;
       greek = seg.indexOf('<span class="lsj-greek', greek + 1)
     ) {
       if (quantityMark(seg, greek)) continue;
+      // A Greek phrase inside the bracket is skipped like a quantity mark —
+      // Ἀδράστεια's "(ἀ- priv., διδράσκω)" is an etymology, not a form — and
+      // the next phrase outside it is judged on its own.
+      if (parenthesized(seg, greek, before)) continue;
       return seg.indexOf('class="lsj-bibl"', greek) !== -1 ? greek : -1;
     }
     return -1;
   };
-  const firstForm = segments.findIndex((seg) => formAt(seg) !== -1);
+  // A lead that ends in "for" is a cross-reference, not a paradigm: ἀναγκαίη's
+  // "ἡ, Ep. and Ion, for ἀνάγκη", διπλός's "ή, όν, poet. for διπλοῦς" — 38
+  // entries, none with a form of its own. The English word at the END of the
+  // lead, after a space, never "for" inside a Greek run or mid-lead; and only
+  // the lead, so a "for" further down a real table is still a row's label.
+  // The segment stays in the head as prose; the table, if any, opens later.
+  const crossRef = (seg: string, at: number): boolean =>
+    /(?:^|\s)for$/i.test(plainLabel(seg.slice(0, at)));
+  const firstForm = segments.findIndex((seg, i) => {
+    const at = formAt(seg, depthBefore[i]);
+    return at !== -1 && !crossRef(seg, at);
+  });
   if (firstForm === -1) return { html: preamble, rows: 0 };
 
   let head = segments.slice(0, firstForm).join('');
@@ -541,7 +578,7 @@ export function buildFormsBlock(preamble: string): { html: string; rows: number 
   // path below is FORBIDDEN for Greek-shaped forms: ἀναγκαίη's "ἡ, Ep. and
   // Ion, for" is 29 characters of prose, and the length path would hand the
   // row the label "for". Greek-shaped leads cut on vocabulary evidence only.
-  const firstAt = formAt(tail[0]);
+  const firstAt = formAt(tail[0], depthBefore[firstForm]);
   const citFirst = tail[0].startsWith('<span class="lsj-cit">', firstAt);
   if (firstAt > 0) {
     const lead = tail[0].slice(0, firstAt);
@@ -601,8 +638,9 @@ export function buildFormsBlock(preamble: string): { html: string; rows: number 
   // cell, so "(" landed in the label column opposite "κατ-, συν". Rows stop at
   // the first segment with no form in it; the remainder stays prose.
   let note = '';
+  const labels: string[] = [];
   for (const [i, seg] of tail.entries()) {
-    const at = formAt(seg);
+    const at = formAt(seg, depthBefore[firstForm + i]);
     if (at === -1) {
       // A segment with no form in it is either an interruption or the end of
       // the table. τίθημι is interrupted after two forms by a 136-character
@@ -611,7 +649,7 @@ export function buildFormsBlock(preamble: string): { html: string; rows: number 
       // later segment still holds a form, this is an aside — keep it with the
       // row above, INSIDE that row, never loose in the grid where it would
       // become its own cell.
-      const more = tail.slice(i + 1).some((rest) => formAt(rest) !== -1);
+      const more = tail.slice(i + 1).some((rest, j) => formAt(rest, depthBefore[firstForm + i + 1 + j]) !== -1);
       if (!more) { note = tail.slice(i).join(''); break; }
       // Before any row exists there is nothing to attach to — it belongs to the
       // head, and must never simply vanish.
@@ -623,11 +661,16 @@ export function buildFormsBlock(preamble: string): { html: string; rows: number 
     }
     const label = plainLabel(seg.slice(0, at));
     const body = seg.slice(at).replace(/[\s:;\u2014]+$/, '');
+    labels.push(label);
     rows.push(
       `<div class="lsj-form"><span class="lsj-form-label">${escapeText(label)}</span>` +
       `<span class="lsj-form-body">${body}</span></div>`,
     );
   }
+  // A table whose only row has no label is not a table. διδάσκαλος and ὅλος
+  // opened on such a row once the "cf." rule took their first row away: a
+  // citation with nothing to label it. The preamble goes back whole, as prose.
+  if (rows.length === 1 && labels[0] === '') return { html: preamble, rows: 0 };
   // Align into a label column only when the labels ARE short labels. In εἰμί a
   // single segment packs several forms of which only one is tagged, so its
   // "label" runs to half a line; a column built on that is worse than no
