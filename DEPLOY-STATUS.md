@@ -13,6 +13,18 @@ The env var is `PUBLIC_SHOW_PRIVATE` (unset or `0` = private translations hidden
 
 **Before committing an app-only deploy, restore every live file the local `build/dist` does not have.** `rsync --delete` stages them for deletion and the count alone will not tell you: read the deletions BY CATEGORY. Two are known — `data/reports` (76 of 88 files, pipeline output, untracked, caught 2026-08-19) and `data/Meta/quotations.json` (generated in the quirky-sanderson worktree on 2026-08-22 and never landed in the main checkout, caught 2026-08-30). Both are restored with `git checkout HEAD -- <path>` inside the gh-pages clone. Expect a third: anything a past deploy built in a worktree lives only on the live site.
 
+## Pending on `claude/weekly-usage-catchup-h8go43` — NOT deployed (2026-09-07)
+
+Fifteen commits, all tests green (shared 441, app 8, desktop 464, workbench 1,829, pipeline 255, scripts 27), nothing built or deployed: the session ran in a container with no `build/dist`, no TLG, and no network. What each piece needs before it is live:
+
+- **Corpus rebuild (`npm run build:public`)** for the pipeline fixes to reach the site: `english.json` keys possessives and contractions as one word (`aristotle's`, not `aristotle` + `s`); chapter bounds on doubled or lettered lines; chapter ranges that end on a real line (PA 689a); preflight now refuses data built from the private manifest against a public one. Expect the English index and every `search/` file to change; `english_head` and offsets should not.
+- **The link gate is stricter.** `check-links.mjs` now fails any root-relative href in emitted HTML that lacks `/aristotle-reader`. Every source was traced and none should trip it, but the first `build:public` is the proof; a false fail is loud.
+- **Deploy with `npm run deploy:dry` first**, then `npm run deploy`. New script; its clone and rsync path has never run against the real gh-pages.
+- **Desktop LSJ forms block**: three rules built, corpus audit NOT run. `node shared/scripts/audit-forms-block.mjs origin/main build/dist/lsj` before the desktop picks up `shared/lib/html.ts`. Then rebuild the desktop `.app`; its library writes are now `.tmp` + rename under a new `fs:allow-rename` grant.
+- **Workbench**: rebuild the `.app`; re-import Physics from the disc, type one character, quit, reopen — the outline must still show eight books (SESSION-HANDOFF.md item 0).
+- **Patch forward to plato-reader and homer**: `shared/lib/html.ts` (sanitizer: stray `<` escaped, attribute entities decoded before the scheme check), `shared/lib/betacode.ts` (capital with iota subscript), `shared/lib/search.ts` and `data.ts` (the search fixes).
+- **A rebuild decision, not made**: `line_runs` drops a line's letter, so `offsetRef` cites a token on 244b5a as 244b5 (about 48 lines). Fixing it changes the offsets shape and needs the reader and stage2 changed together.
+
 ## Latest deploy — 2026-09-03 (the /lemma pages mount grammata's T8 entry)
 
 - **gh-pages:** `103ce1df` → `5f358186`
