@@ -23,13 +23,14 @@
   import { exportLibrary, openExternal, reportProblem } from './lib/export';
   import { parseRouteHref, type RouteAction } from './lib/route-href';
   import {
-    addAnnotation, captureSelection, listAnnotations, newId, paintAnnotations,
+    addAnnotation, annotationsProblem, captureSelection, listAnnotations, newId, paintAnnotations,
     paintPending, clearPending, greekRange, englishRange,
     copySelectionPlain, copySelectionWithCitation, CROSS_COLUMN, PALETTE,
     extractCleanText, greekCiteForRange, segCiteForRange,
     type Annotation, type AnnStyle, type AnnColor, type CaptureResult,
   } from './lib/annotations';
   import { paintEmphasis } from './lib/emphasis-paint';
+  import { importLoadProblems } from './lib/imports';
   import { onMount, onDestroy, tick } from 'svelte';
 
   export let dataLayer: DataLayerInfo;
@@ -396,8 +397,16 @@
   };
   let annTransShown = '';       // single active translation id (mono) or 'compare'
   let annShown: string[] = [];  // translation id(s) actually rendered — for paint/panel
+  // Works whose annotations file could not be read, already announced —
+  // once per work, not on every repaint.
+  const annProblemShown = new Set<string>();
   async function refreshAnnotations() {
     annotations = [...await listAnnotations(workId)];
+    const annProblem = annotationsProblem(workId);
+    if (annProblem && !annProblemShown.has(workId)) {
+      annProblemShown.add(workId);
+      showToast(annProblem, 15000);
+    }
     annTransShown = activeTrans();
     annShown = shownTranslations(annTransShown);
     paintAnnotations(annotations, annShown);
@@ -434,6 +443,10 @@
     window.addEventListener('contextmenu', onReaderContextMenu, true);
     window.addEventListener('mousedown', onReaderMouseDownCapture, true);
     document.addEventListener('copy', onDocumentCopy, true);
+    // Stored translations loadImports() could not read at startup: say so
+    // here rather than let them vanish from the picker unexplained.
+    const problems = importLoadProblems();
+    if (problems.length) showToast(problems.join(' '), 15000);
   });
   onDestroy(() => {
     window.removeEventListener('contextmenu', onReaderContextMenu, true);
@@ -522,11 +535,16 @@
    * dance: capture happens right at mouseup (or at context-menu open), before
    * any focus change, so there's no selection-clearing hazard. */
   async function applyMark(cap: CaptureResult, style: AnnStyle) {
-    await addAnnotation({
-      id: newId(), work: workId, created: new Date().toISOString(),
-      body: '', layer: cap.layer, target: cap.target, exact: cap.exact,
-      style, color,
-    });
+    try {
+      await addAnnotation({
+        id: newId(), work: workId, created: new Date().toISOString(),
+        body: '', layer: cap.layer, target: cap.target, exact: cap.exact,
+        style, color,
+      });
+    } catch (e) {
+      showToast(`Highlight not saved: ${e instanceof Error ? e.message : e}`, 10000);
+      return;
+    }
     // Deliberately keep the selection alive: in armed mode instant-apply would
     // otherwise consume it, leaving right-click (Copy with citation, etc.)
     // nothing to act on. It clears itself on the next click.
@@ -643,11 +661,17 @@
   async function saveNote() {
     if (!noteEditor) return;
     const { work, cap, text } = noteEditor;
-    await addAnnotation({
-      id: newId(), work, created: new Date().toISOString(),
-      body: text.trim(), layer: cap.layer, target: cap.target, exact: cap.exact,
-      style: tool === 'note' ? 'highlight' : tool, color,
-    });
+    try {
+      await addAnnotation({
+        id: newId(), work, created: new Date().toISOString(),
+        body: text.trim(), layer: cap.layer, target: cap.target, exact: cap.exact,
+        style: tool === 'note' ? 'highlight' : tool, color,
+      });
+    } catch (e) {
+      // The editor stays open with the text intact — nothing was written.
+      showToast(`Note not saved: ${e instanceof Error ? e.message : e}`, 10000);
+      return;
+    }
     noteEditor = null;
     _pendingSelRect = null;
     clearPending();
@@ -863,17 +887,17 @@
   // the citation of the top visible line; format it properly and copy.
   let toast = '';
   let toastTimer: ReturnType<typeof setTimeout> | undefined;
-  function showToast(msg: string) {
+  function showToast(msg: string, ms = 3500) {
     toast = msg;
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => (toast = ''), 3500);
+    toastTimer = setTimeout(() => (toast = ''), ms);
   }
 
   function currentCitation(): string | null {
     if (!meta) return null;
     const hash = decodeURIComponent(location.hash.slice(1));
     // Only hashes that are actual citations count (not #ch-… chapter targets).
-    const isCite = busse ? /^p?\d+/.test(hash) : (!!parseBekker(hash) || /^\d{3,4}[ab]$/.test(hash));
+    const isCite = busse ? /^p?\d+/.test(hash) : (!!parseBekker(hash) || /^\d{1,4}[ab]$/.test(hash));
     if (!hash || !isCite) return null;
     // An imported translation carries its own full bibliographic citation
     // (stored with the import, or composed from translator/year/source if

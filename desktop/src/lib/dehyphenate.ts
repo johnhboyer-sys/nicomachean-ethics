@@ -55,6 +55,10 @@ function spellChecker(): Promise<Spell> {
       ]);
       return nspell(aff.default, dic.default) as Spell;
     })();
+    // A failed load is not the answer for the rest of the session: the
+    // dialog reads a rejection as "dictionary unavailable" and skips hyphen
+    // review, so caching it would silently switch the feature off.
+    _spell.catch(() => { _spell = null; });
   }
   return _spell;
 }

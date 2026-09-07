@@ -12,6 +12,11 @@ vi.mock('@tauri-apps/api/core', () => ({
 
 vi.mock('@tauri-apps/plugin-dialog', () => ({
   save: vi.fn(async () => null),
+  open: vi.fn(async () => null),
+}));
+
+vi.mock('@tauri-apps/api/webview', () => ({
+  getCurrentWebview: vi.fn(() => ({ onDragDropEvent: vi.fn(async () => () => undefined) })),
 }));
 
 vi.mock('@tauri-apps/plugin-fs', () => ({
@@ -20,6 +25,8 @@ vi.mock('@tauri-apps/plugin-fs', () => ({
   readDir: vi.fn(async () => []),
   readTextFile: vi.fn(async () => ''),
   writeTextFile: vi.fn(async () => undefined),
+  rename: vi.fn(async () => undefined),
+  remove: vi.fn(async () => undefined),
 }));
 
 vi.mock('@tauri-apps/plugin-opener', () => ({

@@ -448,16 +448,35 @@
   // pre-stage as every other accept path.
   if (file) acceptText(file.name, file.text);
 
+  // A file the app cannot read — a Latin-1 OCR .txt is the usual case, since
+  // Tauri's readTextFile rejects anything that is not valid UTF-8 — must say
+  // so in the drop zone. These reads used to run un-awaited, so the failure
+  // went to the console and the dialog simply did nothing.
+  function readFailure(name: string, e: unknown): string {
+    const detail = e instanceof Error ? e.message : String(e);
+    if (/utf-?8/i.test(detail)) {
+      return `Could not read “${name}”: it is not UTF-8 text. Re-save it as UTF-8 (most editors offer an encoding choice) and try again.`;
+    }
+    return `Could not read “${name}”: ${detail}`;
+  }
+
   async function pickFile() {
     if (isTauri()) {
-      const { open } = await import('@tauri-apps/plugin-dialog');
-      const { readTextFile } = await import('@tauri-apps/plugin-fs');
-      const path = await open({
-        multiple: false,
-        filters: [{ name: 'Translation files', extensions: ['md', 'txt'] }],
-      });
-      if (typeof path === 'string') {
-        acceptText(path.split('/').pop() ?? path, await readTextFile(path));
+      dropError = '';
+      let name = 'the file';
+      try {
+        const { open } = await import('@tauri-apps/plugin-dialog');
+        const { readTextFile } = await import('@tauri-apps/plugin-fs');
+        const path = await open({
+          multiple: false,
+          filters: [{ name: 'Translation files', extensions: ['md', 'txt'] }],
+        });
+        if (typeof path === 'string') {
+          name = path.split(/[/\\]/).pop() ?? path;
+          acceptText(name, await readTextFile(path));
+        }
+      } catch (e) {
+        dropError = readFailure(name, e);
       }
     } else {
       browserInput?.click();
@@ -467,7 +486,12 @@
   async function onBrowserFile(e: Event) {
     const f = (e.target as HTMLInputElement).files?.[0];
     if (!f) return;
-    acceptText(f.name, await f.text());
+    dropError = '';
+    try {
+      acceptText(f.name, await f.text());
+    } catch (err) {
+      dropError = readFailure(f.name, err);
+    }
   }
 
   // ── Drop zone ──────────────────────────────────────────────────────────────
@@ -491,8 +515,12 @@
       dropError = 'Please drop one .txt or .md file.';
       return;
     }
-    const { readTextFile } = await import('@tauri-apps/plugin-fs');
-    acceptText(name, await readTextFile(path));
+    try {
+      const { readTextFile } = await import('@tauri-apps/plugin-fs');
+      acceptText(name, await readTextFile(path));
+    } catch (e) {
+      dropError = readFailure(name, e);
+    }
   }
 
   async function acceptBrowserFile(f: File) {
@@ -501,7 +529,11 @@
       dropError = 'Please drop one .txt or .md file.';
       return;
     }
-    acceptText(f.name, await f.text());
+    try {
+      acceptText(f.name, await f.text());
+    } catch (e) {
+      dropError = readFailure(f.name, e);
+    }
   }
 
   let unlistenDragDrop: UnlistenFn | null = null;

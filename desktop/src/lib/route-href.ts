@@ -20,6 +20,13 @@ export type RouteAction =
 
 const LIVE_SITE = 'https://johnhboyer-sys.github.io/aristotle-reader';
 
+// decodeURIComponent throws on a malformed escape. The click interceptor
+// runs this parser BEFORE preventDefault, so a throw here would let the
+// webview follow the raw href and leave the app — keep the text as-is instead.
+function safeDecode(s: string): string {
+  try { return decodeURIComponent(s); } catch { return s; }
+}
+
 export function parseRouteHref(href: string): RouteAction {
   const raw = href.trim();
   if (!raw) return { kind: 'swallow' };
@@ -39,7 +46,7 @@ export function parseRouteHref(href: string): RouteAction {
   const path = url.pathname.replace(/\/+$/, '') || '/';
 
   const lemma = path.match(/^\/lemma\/([^/]+)$/);
-  if (lemma) return { kind: 'lemma', slug: decodeURIComponent(lemma[1]) };
+  if (lemma) return { kind: 'lemma', slug: safeDecode(lemma[1]) };
 
   const reader = path.match(/^\/([A-Za-z]+)\/book\/(\d+)$/);
   if (reader) {
@@ -47,7 +54,7 @@ export function parseRouteHref(href: string): RouteAction {
     const loc = q.get('loc') ?? undefined;
     const hlg = q.get('hlg') ?? undefined;
     const hle = q.get('hle') ?? undefined;
-    const hash = url.hash ? decodeURIComponent(url.hash.slice(1)) : undefined;
+    const hash = url.hash ? safeDecode(url.hash.slice(1)) : undefined;
     return {
       kind: 'reader',
       work: reader[1],
