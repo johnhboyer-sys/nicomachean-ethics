@@ -83,13 +83,32 @@ function safeHref(value: string): string | null {
   return trimmed;
 }
 
+// An attribute value arrives as HTML source, entities and all, and leaves
+// through escapeAttr, which escapes every "&" again: title="Smith &amp; Jones"
+// reached the browser as "Smith &amp;amp; Jones" and showed the entity itself.
+// Decoding first also puts the scheme check on what the browser would see —
+// "&#106;avascript:" IS "javascript:" — instead of on its spelling. Only the
+// entities the pipeline (and escapeAttr) write; anything else stays literal and
+// is re-escaped, so no decoding can be undone twice.
+const NAMED_ENTITY: Record<string, string> = {
+  amp: '&', lt: '<', gt: '>', quot: '"', apos: "'",
+};
+function decodeEntities(value: string): string {
+  if (!value.includes('&')) return value;
+  return value.replace(/&(?:#x([0-9a-f]{1,6})|#(\d{1,7})|(amp|lt|gt|quot|apos));/gi, (m, hex, dec, named) => {
+    if (named) return NAMED_ENTITY[named.toLowerCase()];
+    const cp = hex ? parseInt(hex, 16) : Number(dec);
+    return cp > 0 && cp <= 0x10ffff ? String.fromCodePoint(cp) : m;
+  });
+}
+
 function sanitizeAttrs(raw: string, tag: string): string {
   const attrs: string[] = [];
   const attrRe = /([^\s"'<>/=]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g;
   let match: RegExpExecArray | null;
   while ((match = attrRe.exec(raw))) {
     const name = match[1].toLowerCase();
-    const value = match[2] ?? match[3] ?? match[4] ?? '';
+    const value = decodeEntities(match[2] ?? match[3] ?? match[4] ?? '');
     if (name.startsWith('on')) continue;
 
     if (name === 'class' && /^[\w -]+$/.test(value)) {
@@ -112,15 +131,28 @@ function sanitizeAttrs(raw: string, tag: string): string {
   return attrs.length ? ` ${attrs.join(' ')}` : '';
 }
 
+// A tag is what the HTML tokenizer calls a tag: "<" or "</" followed AT ONCE by
+// a letter, through to the next ">". Allowing whitespace after the "<" (as this
+// did until 2026-09-07) read "a < b and c > d" as a <b> element and ate the
+// prose between; the browser shows that as text, and so does this now.
+//
+// Every "<" the tag pass leaves behind is escaped. The output is not always
+// mounted on its own: renderLsjEntry and the forms block concatenate more
+// markup after it, and set:html splices it into a server-rendered page. A
+// trailing `<a href=x onclick=alert(1)` with no ">" — which the tag pass
+// cannot match — passed through verbatim and closed itself on whatever came
+// next, `</div>` included, into a live handler. As text it is "&lt;a href…",
+// which is what the parser would have shown for it anyway. A stray "<!" or
+// "<?" likewise opened a bogus comment that hid everything up to the next ">".
 export function sanitizeHtml(html: string): string {
   return html
     .replace(/<!--[\s\S]*?-->/g, '')
-    .replace(/<\s*(script|style|iframe|object|embed)\b[\s\S]*?<\s*\/\s*\1\s*>/gi, '')
-    .replace(/<\s*\/?\s*([a-z][\w:-]*)([^>]*)>/gi, (full, rawTag, rawAttrs) => {
+    .replace(/<(script|style|iframe|object|embed)\b[\s\S]*?<\/\1\s*>/gi, '')
+    .replace(/<(\/?)([a-z][\w:-]*)([^>]*)>|</gi, (full, slash, rawTag, rawAttrs) => {
+      if (rawTag === undefined) return '&lt;';
       const tag = rawTag.toLowerCase();
       if (!ALLOWED_TAGS.has(tag)) return '';
-      const closing = /^<\s*\//.test(full);
-      if (closing) return VOID_TAGS.has(tag) ? '' : `</${tag}>`;
+      if (slash) return VOID_TAGS.has(tag) ? '' : `</${tag}>`;
       return `<${tag}${sanitizeAttrs(rawAttrs ?? '', tag)}>`;
     });
 }

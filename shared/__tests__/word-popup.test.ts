@@ -6,13 +6,19 @@ import { render, screen } from '@testing-library/svelte';
 import { tick } from 'svelte';
 import WordPopup from '../components/WordPopup.svelte';
 import { prefixLsjCitationHrefs } from '../lib/html';
-import { fetchLemmata, lookupWord } from '../lib/data';
+import { fetchLemmata, fetchLsjHeads, lookupWord } from '../lib/data';
+
+// The grammata widget is loaded over the network by URL; mocked here by that
+// exact specifier so the site path can be exercised without it.
+const { grammataLookup } = vi.hoisted(() => ({ grammataLookup: vi.fn(async () => {}) }));
+vi.mock('https://grammata.pages.dev/t8/lookup.js', () => ({ lookup: grammataLookup }));
 
 vi.mock('../lib/data', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../lib/data')>();
   return {
     ...actual,
     fetchLemmata: vi.fn(async () => ({})),
+    fetchLsjHeads: vi.fn(async () => ({})),
     lookupWord: vi.fn(async (_work: string, k: string) => ({
       analyses: [
         k === 'logos'
@@ -346,6 +352,109 @@ describe('WordPopup', () => {
     await screen.findByText('two');
     const glosses = [...container.querySelectorAll('.analysis-card .gloss')].map(e => e.textContent);
     expect(glosses).toEqual(['two', '']);
+  });
+
+  // The three gloss rules (HANDOFF-LSJ §4), each proved in BOTH orders: a
+  // non-empty exact gloss wins; an empty exact clears a fanned-out gloss but
+  // never a real one; a fan-out only fills a hole.
+  // Cards keyed by LSJ key: the heads manifest is mocked to spell each key as
+  // itself, so two homographs (νέω A / νέω B) can be told apart in the DOM.
+  const glossesFor = async (analyses: { lemma: string; gloss: string; lsj: string[] }[]) => {
+    const keys = [...new Set(analyses.flatMap((a) => a.lsj))];
+    vi.mocked(fetchLsjHeads).mockResolvedValue(Object.fromEntries(keys.map((k) => [k, { head: k }])));
+    vi.mocked(lookupWord).mockResolvedValueOnce({
+      analyses: analyses.map((a) => ({ ...a, parse: `parse of ${a.lemma}` })),
+      lsj: [],
+    });
+    const { container, unmount } = render(WordPopup, { props: { ...baseProps, onClose: vi.fn() } });
+    await screen.findAllByText(/parse of/);
+    // The manifest lands a tick after the analyses; wait for the heads.
+    await vi.waitFor(() => {
+      for (const k of keys) expect(screen.getByText(k)).toBeTruthy();
+    });
+    const out = [...container.querySelectorAll('.analysis-card')]
+      .map((c) => [c.querySelector('.lemma')!.textContent, c.querySelector('.gloss')!.textContent]);
+    unmount();
+    return Object.fromEntries(out);
+  };
+  const bothOrders = async (analyses: { lemma: string; gloss: string; lsj: string[] }[]) => {
+    const forward = await glossesFor(analyses);
+    const reversed = await glossesFor([...analyses].reverse());
+    expect(reversed).toEqual(forward);
+    return forward;
+  };
+
+  it('lets a non-empty exact gloss win over a fan-out, in either order', async () => {
+    const out = await bothOrders([
+      { lemma: 'ne/w', gloss: 'swim', lsj: ['ne/w1', 'ne/w2'] },
+      { lemma: 'ne/w2', gloss: 'spin', lsj: ['ne/w2'] },
+    ]);
+    // ne/w1 has only the fan-out: it fills the hole. ne/w2's own gloss wins.
+    expect(out).toEqual({ 'ne/w1': 'swim', 'ne/w2': 'spin' });
+  });
+
+  it('lets an empty exact clear a fanned-out gloss, in either order', async () => {
+    const out = await bothOrders([
+      { lemma: 'du/w', gloss: 'two', lsj: ['du/w1', 'du/w2'] },
+      { lemma: 'du/w2', gloss: '', lsj: ['du/w2'] },
+    ]);
+    expect(out).toEqual({ 'du/w1': 'two', 'du/w2': '' });
+  });
+
+  it('never lets an empty exact clear a real exact gloss, in either order', async () => {
+    const out = await bothOrders([
+      { lemma: 'oi)kodo/mos', gloss: '', lsj: ['oi)kodo/mos'] },
+      { lemma: 'oi)kodo/mos', gloss: 'builder, architect', lsj: ['oi)kodo/mos'] },
+    ]);
+    expect(out).toEqual({ 'oi)kodo/mos': 'builder, architect' });
+  });
+
+  it('lets a fan-out fill a hole but never overwrite, in either order', async () => {
+    // Two fan-outs and no exact: the card keeps the first gloss it was given,
+    // and a later fan-out never replaces it. The corpus has no such token
+    // (order-independence was proved over all 122,540), so only the
+    // "never overwrite" half is a rule; the tie is pinned as first-wins.
+    const single = await glossesFor([
+      { lemma: 'x', gloss: 'first', lsj: ['x1', 'x2'] },
+      { lemma: 'x', gloss: 'second', lsj: ['x1', 'x3'] },
+    ]);
+    expect(single).toEqual({ x1: 'first', x2: 'first', x3: 'second' });
+    // With an exact empty on x1 as well, the fan-out cannot fill it back.
+    const cleared = await bothOrders([
+      { lemma: 'x1', gloss: '', lsj: ['x1'] },
+      { lemma: 'x', gloss: 'first', lsj: ['x1', 'x2'] },
+    ]);
+    expect(cleared).toEqual({ x1: '', x2: 'first' });
+  });
+
+  it('hands grammata the LSJ key, never the surface form', async () => {
+    // grammata re-analyses a surface form from scratch and discards this
+    // reader's disambiguation (εἰσὶ came back ἵημι-first). With a key the word
+    // argument is ignored, so it is passed empty; only an analysis with no
+    // entry at all sends the Unicode LEMMA (never token.t).
+    delete (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__;
+    const lookup = grammataLookup;
+    vi.mocked(lookupWord).mockResolvedValueOnce({
+      analyses: [
+        { lemma: 'ei)mi/', gloss: 'to be', parse: 'pres ind act 3rd pl', lsj: ['ei)mi/'] },
+        { lemma: 'ei)=mi', gloss: 'to go', parse: 'pres ind act 3rd pl', lsj: [] },
+      ],
+      lsj: [],
+    });
+    const { container } = render(WordPopup, {
+      props: { ...baseProps, token: { t: 'εἰσὶ', k: 'eisi' }, onClose: vi.fn() },
+    });
+    await screen.findByText('to be');
+    const faces = container.querySelectorAll<HTMLButtonElement>('.card-face');
+    faces[0].click();
+    await vi.waitFor(() => expect(lookup).toHaveBeenCalledTimes(1));
+    expect(lookup).toHaveBeenLastCalledWith('', expect.any(HTMLElement), { lang: 'grc', key: 'ei)mi/' });
+    faces[1].click();
+    await vi.waitFor(() => expect(lookup).toHaveBeenCalledTimes(2));
+    const [word, , opts] = lookup.mock.calls[1] as unknown as [string, HTMLElement, { key?: string }];
+    expect(word).toBe('εἶμι');
+    expect(word).not.toBe('εἰσὶ');
+    expect(opts).toEqual({ lang: 'grc' });
   });
 
   it('prints a dialect only where the form has no Attic reading', async () => {

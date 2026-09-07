@@ -62,7 +62,11 @@ export function betaToGreek(input: string): string {
       if (base) {
         i++;
         // Capital sigma is always Σ, so no final-form handling needed.
-        out.push((base + breath + accent + sub).normalize('NFC').toUpperCase());
+        // Uppercase the BASE letter, then compose. Uppercasing the composed
+        // string instead put "*(/|a" (ᾍ) through String#toUpperCase, whose full
+        // case mapping expands an iota subscript into a separate capital iota:
+        // "ἍΙδης" for ᾍδης, a capital Ι in the middle of the word.
+        out.push((base.toUpperCase() + breath + accent + sub).normalize('NFC'));
       }
       continue;
     }

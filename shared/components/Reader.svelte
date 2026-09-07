@@ -5,6 +5,7 @@
   import { greekFold } from '../lib/search';
   import { measureGreekTrack as measureTrack } from '../lib/greek-track';
   import { highlightPrefixMatches } from '../lib/text';
+  import { sanitizeHtml } from '../lib/html';
   import { lineParts, cellParts, locateToken, type LinePart } from '../lib/line-parts';
   import { getWork, visibleTranslations, bookLabel as workBookLabel, type TranslationRef } from '../lib/works';
   import { touchRecent } from '../lib/resume';
@@ -1481,10 +1482,12 @@
             <div class="english-col" data-trans={trans === 'compare' ? compareLeft : trans}>
               {#if trans === 'compare'}<div class="col-label">{transById(compareLeft)?.short ?? 'English'}</div>{/if}
               {@render transFlow(block, trans === 'compare' ? compareLeft : trans)}
-              <!-- Inline diagrams ([[figN]] markers), e.g. the Tree of Porphyry. -->
+              <!-- Inline diagrams ([[figN]] markers), e.g. the Tree of Porphyry.
+                   Corpus HTML like a footnote, so it takes the same sanitizer
+                   the footnote and endnote panels apply before {@html}. -->
               {#if busse && view !== 'greek' && block.figs.length}
                 {#each block.figs as fig}
-                  {#if figuresData[String(fig)]}<!-- eslint-disable-next-line svelte/no-at-html-tags -->{@html figuresData[String(fig)]}{/if}
+                  {#if figuresData[String(fig)]}<!-- eslint-disable-next-line svelte/no-at-html-tags -->{@html sanitizeHtml(figuresData[String(fig)])}{/if}
                 {/each}
               {/if}
             </div>

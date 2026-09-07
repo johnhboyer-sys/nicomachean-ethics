@@ -62,6 +62,8 @@ vi.mock('../lib/data', async (importOriginal) => {
       '1': [{ chapter: '1', column: '1094a', line: '1', bekker: '1094a' }],
     })),
     fetchQuotations: vi.fn(async () => []),
+    fetchFigures: vi.fn(async () => ({})),
+    fetchSidenotes: vi.fn(async () => ({})),
   };
 });
 
@@ -183,6 +185,62 @@ describe('Reader.svelte', () => {
     await screen.findByText(/again/);
     expect(container.querySelectorAll('em')).toHaveLength(0);
     expect(container.querySelectorAll('.fn-marker')).toHaveLength(2);
+  });
+
+  it('snaps ?loc= to the nearest Greek line when the cited line is not a line start', async () => {
+    // LSJ cites its own editions' lineation, off by a line or two from ours
+    // (docs/spec-lsj-citations.md decision 8), and the link gate lets those
+    // through on the strength of this fallback: the column must exist, the
+    // exact line need not.
+    window.history.replaceState(null, '', '/EN/book/1?loc=1094a:3');
+    const book: BookData = structuredClone(fixtureBook);
+    book.segments[0].greek = [
+      { n: 1, text: 'λόγος', tokens: [{ t: 'λόγος', o: 0, k: 'logos' }] },
+      { n: 4, text: 'ἀρετή', tokens: [{ t: 'ἀρετή', o: 0, k: 'areth' }] },
+      { n: 9, text: 'φύσις', tokens: [{ t: 'φύσις', o: 0, k: 'fusis' }] },
+    ];
+    const { container } = render(Reader, { props: { work: 'EN', bookNum: 1, bookData: book } });
+    await screen.findByText('1094a');
+    await vi.waitFor(() => expect(container.querySelector('.greek-line.target')).not.toBeNull());
+    expect(container.querySelector('.greek-line.target')!.id).toBe('L1094a-4');
+    expect(Element.prototype.scrollIntoView).toHaveBeenCalled();
+  });
+
+  it('opens an exact ?loc= line without snapping', async () => {
+    window.history.replaceState(null, '', '/EN/book/1?loc=1094a:9');
+    const book: BookData = structuredClone(fixtureBook);
+    book.segments[0].greek = [
+      { n: 1, text: 'λόγος', tokens: [{ t: 'λόγος', o: 0, k: 'logos' }] },
+      { n: 9, text: 'φύσις', tokens: [{ t: 'φύσις', o: 0, k: 'fusis' }] },
+    ];
+    const { container } = render(Reader, { props: { work: 'EN', bookNum: 1, bookData: book } });
+    await screen.findByText('1094a');
+    await vi.waitFor(() => expect(container.querySelector('.greek-line.target')).not.toBeNull());
+    expect(container.querySelector('.greek-line.target')!.id).toBe('L1094a-9');
+  });
+
+  it('sanitizes an inline figure before injecting it', async () => {
+    // figures.json is corpus HTML like a footnote, and it went in raw.
+    const { fetchFigures } = await import('../lib/data');
+    vi.mocked(fetchFigures).mockResolvedValueOnce({
+      '2': '<figure class="diagram"><figcaption>Tree</figcaption><img src=x onerror="alert(1)">'
+        + '<script>alert(2)</script><div class="pt">Substance</div></figure>',
+    });
+    window.history.replaceState(null, '', '/Isa/book/1');
+    const book: BookData = structuredClone(fixtureBook);
+    book.segments[0].english = {
+      text: 'Alpha [[fig2]] gamma.',
+      notes: [],
+      markers: [],
+      bekker: [{ n: 1, offset: 0, real: true }],
+    };
+    const { container } = render(Reader, { props: { work: 'Isa', bookNum: 1, bookData: book } });
+    await screen.findByText(/Alpha/);
+    await vi.waitFor(() => expect(container.querySelector('figure.diagram')).not.toBeNull());
+    expect(container.querySelector('figure.diagram .pt')!.textContent).toBe('Substance');
+    expect(container.querySelector('figure img')).toBeNull();
+    expect(container.querySelector('figure script')).toBeNull();
+    expect(container.innerHTML).not.toContain('onerror');
   });
 
   it('keeps existing sidenote and figure inline markers out of rendered prose', async () => {
