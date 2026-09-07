@@ -16,8 +16,8 @@ Bilingual Greek/English Aristotle reading site (Astro + Svelte), deployed to Git
 - App-only build: `PUBLIC_SHOW_PRIVATE=0 npm run build` in `app/`, Node 22. The env var is `PUBLIC_SHOW_PRIVATE` (unset/0 = hidden); `PUBLIC_HIDE_PRIVATE` is a stale name from old notes.
 - Full corpus rebuild: `npm run build:public` at repo root (runs all gates: preflight, shared-LSJ verify, link integrity).
 - `/bonitz` is 404 on live and must stay so. The page was removed from `app/` on 2026-09-03 (it built empty and carried an unfixed XSS); no move-aside is needed at build time any more. A future Index Aristotelicus reader is built against bonitz-text's output, not resurrected from git.
-- Deploy = rsync into a fresh shallow gh-pages clone, commit, push. Never `rm -rf .git && git init` — times out at this repo size.
-- Pre-deploy leak check: no gated-translation prose (Ackrill, Tredennick, Rackham) in data JSON. Known benign hits are listed in DEPLOY-STATUS.md.
+- Deploy = `npm run deploy` at the root (`scripts/deploy-gh-pages.mjs`: fresh shallow gh-pages clone, rsync with deletions reported by category, live-only files restored, leak check, commit, push; `npm run deploy:dry` rehearses). Never `rm -rf .git && git init` — times out at this repo size.
+- Pre-deploy leak check: no gated-translation prose (Ackrill, Tredennick, Irwin, Rackham) in data JSON. The deploy script runs it with a positive control; known benign hits are its `KNOWN_BENIGN` list and DEPLOY-STATUS.md.
 - Link-integrity gate must report 0 broken before pushing.
 
 ## Hard gotchas
