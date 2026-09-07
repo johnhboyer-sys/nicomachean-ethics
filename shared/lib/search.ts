@@ -40,7 +40,10 @@ type EngIndex = Record<string, number[] | [number, number][]>;
 export interface Offsets {
   token_count: number;
   seg_base_offset: number[];
-  segments: { book: number; column: string; line_runs: [number, number][] }[];
+  // A run is [n, count], or [n, count, sub] on a lettered line (stage6 since
+  // 2026-09-07). An older build carries only the pair, and a token on a
+  // lettered line is then cited by the bare number, as it always was.
+  segments: { book: number; column: string; line_runs: ([number, number] | [number, number, string])[] }[];
   book_bounds: { book: number; start: number }[];
   // accuracy is 'exact' where the chapter start was matched against the Greek
   // text, 'line-snapped' where the source knew only the Bekker line.
@@ -567,7 +570,7 @@ async function searchWork(
 // Turn a global offset into a citable position, using only offsets.json — the
 // phrase browser shows hundreds of citations at once and must not have to fetch
 // a whole book for each. line_runs exists for exactly this.
-export interface OffsetRef { seg_idx: number; pos: number; book: number; column: string; line: number }
+export interface OffsetRef { seg_idx: number; pos: number; book: number; column: string; line: number; sub?: string }
 
 export function offsetRef(offsets: Offsets, global: number): OffsetRef | null {
   const base = offsets.seg_base_offset;
@@ -576,8 +579,10 @@ export function offsetRef(offsets: Offsets, global: number): OffsetRef | null {
   const seg = offsets.segments[seg_idx];
   if (!seg) return null;
   let left = pos;
-  for (const [line, count] of seg.line_runs) {
-    if (left < count) return { seg_idx, pos, book: seg.book, column: seg.column, line };
+  for (const [line, count, sub] of seg.line_runs) {
+    if (left < count) {
+      return { seg_idx, pos, book: seg.book, column: seg.column, line, ...(sub ? { sub } : {}) };
+    }
     left -= count;
   }
   return null;

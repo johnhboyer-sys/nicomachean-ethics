@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy, tick } from 'svelte';
   import { fade } from 'svelte/transition';
-  import { fetchBook, parseBekker, fetchSidenotes, fetchFigures, fetchQuotations, type Segment, type GreekLine, type Token, type BookData, type OverlayPiece, type Quotation } from '../lib/data';
+  import { fetchBook, parseBekker, lineAnchor, lineRef, fetchSidenotes, fetchFigures, fetchQuotations, type Segment, type GreekLine, type Token, type BookData, type OverlayPiece, type Quotation } from '../lib/data';
   import { greekFold } from '../lib/search';
   import { measureGreekTrack as measureTrack } from '../lib/greek-track';
   import { highlightPrefixMatches } from '../lib/text';
@@ -514,9 +514,9 @@
   // Open at a Bekker citation from the URL hash: the exact Greek line if it's
   // present and visible, otherwise the owning column. Instant (no animation) so
   // it doesn't stream scroll-events, and suppressed so it doesn't self-arm.
-  function scrollToCitation(column: string, line: number) {
+  function scrollToCitation(column: string, line: number, sub?: string) {
     suppressArmUntil = Date.now() + 800;
-    const lineEl = document.getElementById(`L${column}-${line}`);
+    const lineEl = document.getElementById(lineAnchor(column, line, sub));
     if (lineEl && (lineEl as HTMLElement).offsetParent !== null) {
       lineEl.scrollIntoView({ behavior: 'auto', block: 'center' });
     } else {
@@ -964,7 +964,9 @@
     if (loc) {
       const [col, ln] = loc.split(':');
       locCol = col;
-      locLine = Number(ln);
+      // A lettered line arrives as "5a": the id keeps the letter, and the
+      // nearest-line fallback below reads the number in front of it.
+      locLine = parseInt(ln, 10);
       targetId = `L${col}-${ln}`;
     }
     // Restore saved view, but a jump-in (loc/highlight) forces bilingual so the
@@ -1030,10 +1032,10 @@
         } else if (hash) {
           const ref = parseBekker(hash);
           if (ref) {
-            scrollToCitation(ref.column, ref.line);
-            lastCite = `${ref.column}${ref.line}`;
+            scrollToCitation(ref.column, ref.line, ref.sub);
+            lastCite = `${ref.column}${lineRef(ref.line, ref.sub)}`;
             // Tint the cited line so a shared link makes the passage obvious.
-            targetId = `L${ref.column}-${ref.line}`;
+            targetId = lineAnchor(ref.column, ref.line, ref.sub);
           } else {
             // Column-level citations (the scroll-spy writes bare "#1107a" when
             // the Greek column is hidden) target the segment element col-<col>.
@@ -1122,8 +1124,11 @@
 
   // Show line number only for multiples of 5 (and line 1). Suppressed entirely
   // for non-Bekker works whose synthetic line numbers aren't meaningful.
-  function showLineNum(n: number): string {
+  function showLineNum(n: number, sub?: string): string {
     if (hideLineNums) return '';
+    // A lettered line always prints its own number: it is the second line
+    // called 5 in that column, and an unlabelled one reads as a stray.
+    if (sub) return lineRef(n, sub);
     if (n === 1 || n % 5 === 0) return String(n);
     return '';
   }
@@ -1449,8 +1454,8 @@
                   <!-- Greek inline table (the TLG ⎪ column square, e.g. De Int 22a). -->
                   <table class="greek-table"><tbody>
                     {#each item.rows as row}
-                      <tr id={`L${seg.column}-${row.n}`} class:target={targetId === `L${seg.column}-${row.n}`}>
-                        <td class="line-num">{showLineNum(row.n)}</td>
+                      <tr id={lineAnchor(seg.column, row.n, row.sub)} class:target={targetId === lineAnchor(seg.column, row.n, row.sub)}>
+                        <td class="line-num">{showLineNum(row.n, row.sub)}</td>
                         {#each (row.cells ?? []) as cell}
                           <td class="line-text" lang="grc">{@render greekToks(cellParts(cell))}</td>
                         {/each}
@@ -1458,8 +1463,8 @@
                     {/each}
                   </tbody></table>
                 {:else}
-                  <div class="greek-line" id={item.line.cont ? `L${seg.column}-${item.line.n}-c` : `L${seg.column}-${item.line.n}`} class:target={!item.line.cont && targetId === `L${seg.column}-${item.line.n}`} class:cont={item.line.cont}>
-                    <span class="line-num">{item.line.cont ? '' : showLineNum(item.line.n)}</span>
+                  <div class="greek-line" id={item.line.cont ? `${lineAnchor(seg.column, item.line.n, item.line.sub)}-c` : lineAnchor(seg.column, item.line.n, item.line.sub)} class:target={!item.line.cont && targetId === lineAnchor(seg.column, item.line.n, item.line.sub)} class:cont={item.line.cont}>
+                    <span class="line-num">{item.line.cont ? '' : showLineNum(item.line.n, item.line.sub)}</span>
                     <!-- The siglum sits in the margin at the gutter's edge; when the
                          line also carries a Bekker number, it slides left of it —
                          the number never yields its slot. -->

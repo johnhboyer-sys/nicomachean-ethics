@@ -13,6 +13,10 @@ export interface Token {
 
 export interface GreekLine {
   n: number;
+  // Bekker's lettered lines: 244b carries 5 and then 5a, two lines sharing a
+  // number. The suffix is part of the line's identity — its anchor id, its
+  // gutter label and any citation of it — and stage3 keeps it for that.
+  sub?: string;
   text: string;
   joined?: boolean;
   tokens: Token[];
@@ -263,13 +267,24 @@ export function fetchBekkerIndex(): Promise<Record<string, BekkerRef[]>> {
 }
 
 // Parse a raw Bekker citation (e.g. "1097a15", "1097a 15", "1097a.15") into
-// its column ("1097a") and line (15). Returns null if it isn't a citation.
+// its column ("1097a"), line (15) and, on a lettered line, its suffix
+// ("244b5a" → 244b, 5, "a"). Returns null if it isn't a citation.
 // The page can be one digit: the Categories run 1a–15b and De Interpretatione
 // 16a–24b, so "16a5" is a citation as much as "1097a15" is.
-export function parseBekker(raw: string): { column: string; line: number } | null {
-  const m = raw.trim().toLowerCase().replace(/\s+/g, '').match(/^(\d{1,4})([ab])\.?(\d+)$/);
+export function parseBekker(raw: string): { column: string; line: number; sub?: string } | null {
+  const m = raw.trim().toLowerCase().replace(/\s+/g, '').match(/^(\d{1,4})([ab])\.?(\d+)([a-z])?$/);
   if (!m) return null;
-  return { column: m[1] + m[2], line: Number(m[3]) };
+  return { column: m[1] + m[2], line: Number(m[3]), ...(m[4] ? { sub: m[4] } : {}) };
+}
+
+// The identity of one Bekker line, as the reader's anchor ids and citations
+// spell it: the suffix belongs to the line, so 244b5 and 244b5a are two lines
+// and not one written twice.
+export function lineRef(n: number, sub?: string): string {
+  return `${n}${sub ?? ''}`;
+}
+export function lineAnchor(column: string, n: number, sub?: string): string {
+  return `L${column}-${lineRef(n, sub)}`;
 }
 
 // Resolve a parsed citation to the book that owns it. For a column shared by

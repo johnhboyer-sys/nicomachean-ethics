@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ENGLISH_HEAD_LIMIT, engPhraseMatches, greekFold, search, searchGrammar } from '../lib/search';
+import { ENGLISH_HEAD_LIMIT, engPhraseMatches, greekFold, offsetRef, search, searchGrammar } from '../lib/search';
 
 const meta = [
   { id: 's1', book: 1, column: '1094a', greek_head: 'λόγος ἀρετή', english_head: 'virtue is a habit of choice' },
@@ -439,5 +439,35 @@ describe('an English word typed or pasted from the page', () => {
   it('finds a phrase whose words the page prints with curly marks', async () => {
     const { results } = await search('', 'first ‘change’ isn’t', 'all', 'phrase', 'and', ['TQuotesPhrase']);
     expect(results.map((r) => r.meta.id)).toEqual(['Q1']);
+  });
+});
+
+describe('offsetRef names the line a token stands on', () => {
+  // stage6 writes [n, count], or [n, count, sub] on a lettered line. 244b runs
+  // 4, 5, 5a, 6 here: two tokens each.
+  const offsets = {
+    token_count: 8,
+    seg_base_offset: [0],
+    segments: [{
+      book: 7,
+      column: '244b',
+      line_runs: [[4, 2], [5, 2], [5, 2, 'a'], [6, 2]] as ([number, number] | [number, number, string])[],
+    }],
+    book_bounds: [{ book: 7, start: 0 }],
+    chapter_bounds: [],
+  };
+
+  it('carries the letter, so a token on 244b5a is not cited as 244b5', () => {
+    expect(offsetRef(offsets, 2)).toMatchObject({ column: '244b', line: 5 });
+    expect(offsetRef(offsets, 2)!.sub).toBeUndefined();
+    expect(offsetRef(offsets, 4)).toMatchObject({ column: '244b', line: 5, sub: 'a' });
+    expect(offsetRef(offsets, 5)).toMatchObject({ line: 5, sub: 'a' });
+    expect(offsetRef(offsets, 6)).toMatchObject({ line: 6 });
+  });
+
+  it('reads an older build, whose runs carry no letter', () => {
+    const older = { ...offsets, segments: [{ ...offsets.segments[0], line_runs: [[4, 2], [5, 2], [5, 2], [6, 2]] as [number, number][] }] };
+    expect(offsetRef(older, 4)).toMatchObject({ line: 5 });
+    expect(offsetRef(older, 4)!.sub).toBeUndefined();
   });
 });

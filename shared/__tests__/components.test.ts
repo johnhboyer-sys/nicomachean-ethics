@@ -113,6 +113,31 @@ describe('Reader.svelte', () => {
     expect(within(main).getAllByText(/virtue/i).length).toBeGreaterThan(0);
   });
 
+  it('gives a lettered line its own anchor and prints its number', async () => {
+    // Bekker's 244b carries a line 5 and then a line 5a. Sharing one id made
+    // getElementById return whichever came first, so a citation of the second
+    // landed on the first; and the gutter, which prints only multiples of five,
+    // left the lettered line unlabelled beside a 5 that was not it.
+    const book: BookData = structuredClone(fixtureBook);
+    book.segments[0].column = '244b';
+    book.segments[0].greek = [
+      { n: 5, text: 'πρῶτον', tokens: [{ t: 'πρῶτον', o: 0, k: 'prwton' }] },
+      { n: 5, sub: 'a', text: 'ὑπόκειται', tokens: [{ t: 'ὑπόκειται', o: 0, k: 'upokeitai' }] },
+    ];
+    window.history.replaceState(null, '', '/Phys/book/7?loc=244b:5a');
+
+    const { container } = render(Reader, { props: { work: 'Phys', bookNum: 7, bookData: book } });
+    await screen.findByText('244b');
+
+    expect(container.querySelector('#L244b-5')).not.toBeNull();
+    const lettered = container.querySelector('#L244b-5a');
+    expect(lettered).not.toBeNull();
+    expect(lettered!.querySelector('.line-num')?.textContent).toBe('5a');
+    // ?loc=244b:5a tints the lettered line, not the bare 5 above it.
+    expect(lettered!.classList.contains('target')).toBe(true);
+    expect(container.querySelector('#L244b-5')!.classList.contains('target')).toBe(false);
+  });
+
   it('renders sidecar English paragraph markers as paragraph breaks', async () => {
     window.history.replaceState(null, '', '/EN/book/1?trans=rackham');
     const book: BookData = structuredClone(fixtureBook);

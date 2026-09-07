@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { fetchAnalyses, fetchBekkerIndex, fetchBook, fetchColumns, fetchFootnotes, fetchLemmata, fetchLsjShard, invalidateBookCache, lookupWord, lsjShard, parseBekker, resolveBekker } from '../lib/data';
+import { fetchAnalyses, fetchBekkerIndex, fetchBook, fetchColumns, fetchFootnotes, fetchLemmata, fetchLsjShard, invalidateBookCache, lineAnchor, lineRef, lookupWord, lsjShard, parseBekker, resolveBekker } from '../lib/data';
 
 function mockFetch(map: Record<string, unknown>) {
   vi.spyOn(globalThis, 'fetch').mockImplementation((url) => {
@@ -22,6 +22,8 @@ describe('parseBekker and resolveBekker', () => {
     ['  1000b2  ', { column: '1000b', line: 2 }],
     ['16a5', { column: '16a', line: 5 }],      // De Interpretatione
     ['1b12', { column: '1b', line: 12 }],      // Categories
+    ['244b5a', { column: '244b', line: 5, sub: 'a' }],   // a lettered line
+    ['244B.5A', { column: '244b', line: 5, sub: 'a' }],
     ['not a citation', null],
     ['1097c15', null],
   ])('parses %s', (raw, expected) => {
@@ -155,5 +157,22 @@ describe('a failed fetch is not remembered', () => {
     await expect(fetchLemmata()).rejects.toThrow('lemmata.json: 404');
     mockFetch({ 'lemmata.json': { 'lo/gos': { slug: 'logos', head: 'λόγος', count: 3 } } });
     await expect(fetchLemmata()).resolves.toEqual({ 'lo/gos': { slug: 'logos', head: 'λόγος', count: 3 } });
+  });
+});
+
+describe("a lettered line's identity", () => {
+  // Bekker's 244b carries a line 5 and then a line 5a. The suffix belongs to
+  // the line: two lines that share a number are not one line written twice,
+  // and an anchor that dropped the letter gave them one id between them.
+  it('keeps the letter in the anchor and in the citation', () => {
+    expect(lineAnchor('244b', 5)).toBe('L244b-5');
+    expect(lineAnchor('244b', 5, 'a')).toBe('L244b-5a');
+    expect(lineRef(5)).toBe('5');
+    expect(lineRef(5, 'a')).toBe('5a');
+  });
+
+  it('round-trips through parseBekker', () => {
+    const ref = parseBekker('244b5a')!;
+    expect(lineAnchor(ref.column, ref.line, ref.sub)).toBe('L244b-5a');
   });
 });
