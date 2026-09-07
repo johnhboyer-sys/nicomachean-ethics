@@ -18,6 +18,8 @@
 //   [REVIEW: "understanding" or "under-standing"?]
 // which the import dialog's review queue resolves choice by choice.
 
+import { lazy } from './runtime';
+
 export interface HyphenDecision {
   original: string;      // "under-\nstanding" as matched
   closed: string;        // "understanding"
@@ -40,28 +42,22 @@ const SITE = /([A-Za-z]+)-\r?\n([A-Za-z]+)/g;
 
 type Spell = { correct(word: string): boolean };
 
-let _spell: Promise<Spell> | null = null;
-function spellChecker(): Promise<Spell> {
-  if (!_spell) {
-    _spell = (async () => {
-      // The hunspell en_US data is vendored under assets (dictionary-en is a
-      // Node-only package — it reads its files with fs); ?raw hands the .aff/
-      // .dic contents to nspell as strings, which works in browser and Tauri
-      // alike. See src/assets/dict-en/license (SCOWL, permissive).
-      const [{ default: nspell }, aff, dic] = await Promise.all([
-        import('nspell'),
-        import('../assets/dict-en/index.aff?raw'),
-        import('../assets/dict-en/index.dic?raw'),
-      ]);
-      return nspell(aff.default, dic.default) as Spell;
-    })();
-    // A failed load is not the answer for the rest of the session: the
-    // dialog reads a rejection as "dictionary unavailable" and skips hyphen
-    // review, so caching it would silently switch the feature off.
-    _spell.catch(() => { _spell = null; });
-  }
-  return _spell;
-}
+// Loaded once; a failed load is not the answer for the rest of the session
+// (lazy() evicts a rejection): the dialog reads a rejection as "dictionary
+// unavailable" and skips hyphen review, so caching it would silently switch
+// the feature off.
+const spellChecker = lazy<Spell>(async () => {
+  // The hunspell en_US data is vendored under assets (dictionary-en is a
+  // Node-only package — it reads its files with fs); ?raw hands the .aff/
+  // .dic contents to nspell as strings, which works in browser and Tauri
+  // alike. See src/assets/dict-en/license (SCOWL, permissive).
+  const [{ default: nspell }, aff, dic] = await Promise.all([
+    import('nspell'),
+    import('../assets/dict-en/index.aff?raw'),
+    import('../assets/dict-en/index.dic?raw'),
+  ]);
+  return nspell(aff.default, dic.default) as Spell;
+});
 
 export async function dehyphenate(text: string): Promise<DehyphenationResult> {
   const sites = [...text.matchAll(SITE)];

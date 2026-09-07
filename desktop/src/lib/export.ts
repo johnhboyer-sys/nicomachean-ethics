@@ -5,7 +5,7 @@
 // The bundle is self-describing ({formatVersion, exportedAt, …}) so a future
 // "import library" can restore it; nothing in it is machine-specific.
 
-import { isTauri } from './runtime';
+import { isTauri, errorText } from './runtime';
 import { annotationsProblem, listAnnotations, type Annotation } from './annotations';
 import { WORKS } from '@shared/lib/works';
 
@@ -26,8 +26,6 @@ export interface LibraryBundle {
    *  silently claims to be complete. Absent when everything was readable. */
   skipped?: { work: string; id: string; reason: string }[];
 }
-
-const errorText = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
 async function buildBundle(): Promise<LibraryBundle> {
   const annotations: Record<string, Annotation[]> = {};

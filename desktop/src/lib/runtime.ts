@@ -52,3 +52,35 @@ export async function initDataLayer(): Promise<DataLayerInfo> {
   // No on-disk corpus: fall through to /data (tauri dev against the vite server).
   return { host: 'tauri', corpusDir: null };
 }
+
+// ── small runtime helpers shared by the data modules ────────────────────────
+
+/** The message of a thrown value, whatever was thrown. */
+export function errorText(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
+}
+
+/**
+ * Memoise a promise-returning factory. The first call starts `make()` and
+ * every later call shares that promise — except after a rejection, which is
+ * evicted so the next call retries instead of replaying the failure for the
+ * rest of the session. Callers still receive the original rejection.
+ */
+export function lazy<T>(make: () => Promise<T>): () => Promise<T> {
+  let p: Promise<T> | null = null;
+  return () => (p ??= make().catch(e => { p = null; throw e; }));
+}
+
+type AtomicFs = Pick<typeof import('@tauri-apps/plugin-fs'), 'writeTextFile' | 'rename'>;
+
+/**
+ * Write-then-rename: stage `body` under `<path>.tmp` and move it into place
+ * only once fully written, so a crash mid-write can never leave a truncated
+ * file at `path`. rename() is atomic on every desktop filesystem Tauri
+ * targets (same directory).
+ */
+export async function atomicWriteText(fs: AtomicFs, path: string, body: string): Promise<void> {
+  const tmp = `${path}.tmp`;
+  await fs.writeTextFile(tmp, body);
+  await fs.rename(tmp, path);
+}

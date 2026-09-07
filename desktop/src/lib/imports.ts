@@ -15,7 +15,7 @@
 import { fetchBook, fetchChapters, type BookData, type ChapterRef, type OverlayPiece } from '@shared/lib/data';
 import type { TranslationRef } from '@shared/lib/works';
 import { getWork } from '@shared/lib/works';
-import { isTauri } from './runtime';
+import { isTauri, errorText, lazy, atomicWriteText } from './runtime';
 import {
   parseTranslationFile, serializeFrontmatter, splitChapters, splitFrontmatter, slugId, composeCitation, auditChapterKeys,
   type ParsedTranslation, type TranslationMeta, type FootnoteScope,
@@ -105,8 +105,6 @@ interface Store {
 
 const LS_PREFIX = 'import-map:';
 
-const errorText = (e: unknown): string => (e instanceof Error ? e.message : String(e));
-
 function parseRecord(raw: string, where: string): ImportRecord {
   const rec = JSON.parse(raw) as ImportRecord;
   if (!rec || typeof rec !== 'object' || typeof rec.meta?.id !== 'string' || !rec.overlaysByBook) {
@@ -174,25 +172,19 @@ async function tauriStore(): Promise<Store> {
       const p = await join(await dirOf(work), `${id}.map.json`);
       return parseRecord(await fs.readTextFile(p), p);
     },
-    // Write-then-rename: each file is staged under a `.tmp` name and moved
-    // into place only once fully written, the map last — `list()` keys on
+    // Write-then-rename (atomicWriteText), the map last — `list()` keys on
     // `.map.json`, so a crash mid-write leaves stray `.tmp` files, never a
-    // registered translation whose text or map is truncated. rename() is
-    // atomic on every desktop filesystem Tauri targets (same directory).
+    // registered translation whose text or map is truncated.
     async write(work, id, content, original, record) {
       const dir = await dirOf(work);
       await fs.mkdir(dir, { recursive: true });
-      const staged: { tmp: string; final: string }[] = [];
       for (const [name, body] of [
         [`${id}.md`, content],
         [`${id}.original`, original],
         [`${id}.map.json`, JSON.stringify(record)],
       ] as const) {
-        const tmp = await join(dir, `${name}.tmp`);
-        await fs.writeTextFile(tmp, body);
-        staged.push({ tmp, final: await join(dir, name) });
+        await atomicWriteText(fs, await join(dir, name), body);
       }
-      for (const { tmp, final } of staged) await fs.rename(tmp, final);
     },
     async exists(work, id) {
       return fs.exists(await join(await dirOf(work), `${id}.map.json`));
@@ -200,16 +192,9 @@ async function tauriStore(): Promise<Store> {
   };
 }
 
-let _store: Promise<Store> | null = null;
-function store(): Promise<Store> {
-  if (!_store) {
-    _store = isTauri() ? tauriStore() : Promise.resolve(browserStore);
-    // A failed handle (app-data dir not resolvable yet) must not be the
-    // cached answer for the rest of the session — retry on the next call.
-    _store.catch(() => { _store = null; });
-  }
-  return _store;
-}
+// A failed handle (app-data dir not resolvable yet) must not be the cached
+// answer for the rest of the session — lazy() retries on the next call.
+const store = lazy<Store>(() => (isTauri() ? tauriStore() : Promise.resolve(browserStore)));
 
 // ── runtime registration ─────────────────────────────────────────────────────
 

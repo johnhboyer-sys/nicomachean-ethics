@@ -6,9 +6,10 @@
   // Reader needs no desktop-specific changes.
   import Reader from '@shared/components/Reader.svelte';
   import { getWork, bookLabel, visibleTranslations } from '@shared/lib/works';
-  import { parseBekker, invalidateBookCache } from '@shared/lib/data';
+  import { invalidateBookCache } from '@shared/lib/data';
+  import { parseCitation } from '@shared/lib/palette';
   import { entryByDataId } from './lib/corpus';
-  import { isTauri, type DataLayerInfo } from './lib/runtime';
+  import { isTauri, errorText, type DataLayerInfo } from './lib/runtime';
   import LibraryRail from './components/LibraryRail.svelte';
   import BekkerJump from '@shared/components/BekkerJump.svelte';
   import ThemeToggle from './components/ThemeToggle.svelte';
@@ -542,7 +543,7 @@
         style, color,
       });
     } catch (e) {
-      showToast(`Highlight not saved: ${e instanceof Error ? e.message : e}`, 10000);
+      showToast(`Highlight not saved: ${errorText(e)}`, 10000);
       return;
     }
     // Deliberately keep the selection alive: in armed mode instant-apply would
@@ -669,7 +670,7 @@
       });
     } catch (e) {
       // The editor stays open with the text intact — nothing was written.
-      showToast(`Note not saved: ${e instanceof Error ? e.message : e}`, 10000);
+      showToast(`Note not saved: ${errorText(e)}`, 10000);
       return;
     }
     noteEditor = null;
@@ -897,7 +898,7 @@
     if (!meta) return null;
     const hash = decodeURIComponent(location.hash.slice(1));
     // Only hashes that are actual citations count (not #ch-… chapter targets).
-    const isCite = busse ? /^p?\d+/.test(hash) : (!!parseBekker(hash) || /^\d{1,4}[ab]$/.test(hash));
+    const isCite = busse ? /^p?\d+/.test(hash) : !!parseCitation(hash);
     if (!hash || !isCite) return null;
     // An imported translation carries its own full bibliographic citation
     // (stored with the import, or composed from translator/year/source if
@@ -954,7 +955,7 @@
       const summary = await exportLibrary();
       if (summary) showToast(`Library exported — ${summary}`);
     } catch (e) {
-      showToast(`Export failed: ${e instanceof Error ? e.message : e}`);
+      showToast(`Export failed: ${errorText(e)}`);
     }
   }
   function doReport() {
@@ -1012,7 +1013,10 @@
     if (!(a instanceof HTMLAnchorElement)) return;
     const href = a.getAttribute('href') ?? '';
     if (a.download) return;                     // CSV export, etc.
-    const action = parseRouteHref(href);
+    // The parser runs before preventDefault: if it ever threw, the webview
+    // would follow the raw href and navigate away — so a throw swallows.
+    let action: RouteAction;
+    try { action = parseRouteHref(href); } catch { action = { kind: 'swallow' }; }
     if (action.kind === 'passthrough') return;
     e.preventDefault();
     void applyRoute(action);

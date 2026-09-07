@@ -60,7 +60,7 @@ export const PALETTE: AnnColor[] = ['yellow', 'green', 'pink', 'blue', 'purple',
 
 // ── storage ──────────────────────────────────────────────────────────────────
 
-import { isTauri } from './runtime';
+import { isTauri, errorText, lazy, atomicWriteText } from './runtime';
 
 interface AnnRead {
   anns: Annotation[];
@@ -73,8 +73,6 @@ interface AnnStore {
   read(work: string): Promise<AnnRead>;
   write(work: string, anns: Annotation[]): Promise<void>;
 }
-
-const errorText = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
 function parseAnnotations(raw: string): Annotation[] {
   const parsed: unknown = JSON.parse(raw);
@@ -119,21 +117,13 @@ async function tauriStore(): Promise<AnnStore> {
     // file where the user's annotations were.
     async write(work, anns) {
       await fs.mkdir(dir, { recursive: true });
-      const tmp = await join(dir, `${work}.json.tmp`);
-      await fs.writeTextFile(tmp, JSON.stringify(anns, null, 1));
-      await fs.rename(tmp, await join(dir, `${work}.json`));
+      await atomicWriteText(fs, await join(dir, `${work}.json`), JSON.stringify(anns, null, 1));
     },
   };
 }
 
-let _store: Promise<AnnStore> | null = null;
-function store(): Promise<AnnStore> {
-  if (!_store) {
-    _store = isTauri() ? tauriStore() : Promise.resolve(browserStore);
-    _store.catch(() => { _store = null; }); // never cache a failed handle
-  }
-  return _store;
-}
+// A failed handle is never cached (see lazy()).
+const store = lazy<AnnStore>(() => (isTauri() ? tauriStore() : Promise.resolve(browserStore)));
 
 const _cache = new Map<string, AnnRead>();
 
@@ -152,32 +142,31 @@ export function annotationsProblem(work: string): string | null {
   return _cache.get(work)?.problem ?? null;
 }
 
-/** Persist `next` as the work's full list; the in-memory list changes only
- *  after the write succeeded, so a failed save is never shown as saved. */
-async function commit(work: string, next: Annotation[]): Promise<void> {
+/** Persist the list `mutate` derives from the work's current one; a mutator
+ *  returning null declines (nothing written). A work whose file could not be
+ *  read refuses every write. The in-memory list changes only after the write
+ *  succeeded, so a failed save is never shown as saved. */
+async function commit(work: string, mutate: (anns: Annotation[]) => Annotation[] | null): Promise<void> {
   const entry = await entryFor(work);
   if (entry.problem) throw new Error(entry.problem);
+  const next = mutate(entry.anns);
+  if (!next) return;
   await (await store()).write(work, next);
   entry.anns = next;
 }
 
 export async function addAnnotation(a: Annotation): Promise<void> {
-  const anns = await listAnnotations(a.work);
-  await commit(a.work, [...anns, a]);
+  await commit(a.work, anns => [...anns, a]);
 }
 
+/** Unknown ids are a silent no-op. */
 export async function updateAnnotation(work: string, id: string, body: string): Promise<void> {
-  const entry = await entryFor(work);
-  if (entry.problem) throw new Error(entry.problem);
-  if (!entry.anns.some(x => x.id === id)) return;
-  await commit(work, entry.anns.map(x => (x.id === id ? { ...x, body } : x)));
+  await commit(work, anns => (anns.some(x => x.id === id) ? anns.map(x => (x.id === id ? { ...x, body } : x)) : null));
 }
 
+/** Unknown ids are a silent no-op. */
 export async function deleteAnnotation(work: string, id: string): Promise<void> {
-  const entry = await entryFor(work);
-  if (entry.problem) throw new Error(entry.problem);
-  if (!entry.anns.some(x => x.id === id)) return;
-  await commit(work, entry.anns.filter(x => x.id !== id));
+  await commit(work, anns => (anns.some(x => x.id === id) ? anns.filter(x => x.id !== id) : null));
 }
 
 export function newId(): string {
