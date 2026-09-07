@@ -20,6 +20,8 @@ describe('parseBekker and resolveBekker', () => {
     ['1097a 15', { column: '1097a', line: 15 }],
     ['1097A.15', { column: '1097a', line: 15 }],
     ['  1000b2  ', { column: '1000b', line: 2 }],
+    ['16a5', { column: '16a', line: 5 }],      // De Interpretatione
+    ['1b12', { column: '1b', line: 12 }],      // Categories
     ['not a citation', null],
     ['1097c15', null],
   ])('parses %s', (raw, expected) => {

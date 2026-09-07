@@ -282,8 +282,10 @@ export function fetchBekkerIndex(): Promise<Record<string, BekkerRef[]>> {
 
 // Parse a raw Bekker citation (e.g. "1097a15", "1097a 15", "1097a.15") into
 // its column ("1097a") and line (15). Returns null if it isn't a citation.
+// The page can be one digit: the Categories run 1a–15b and De Interpretatione
+// 16a–24b, so "16a5" is a citation as much as "1097a15" is.
 export function parseBekker(raw: string): { column: string; line: number } | null {
-  const m = raw.trim().toLowerCase().replace(/\s+/g, '').match(/^(\d{3,4})([ab])\.?(\d+)$/);
+  const m = raw.trim().toLowerCase().replace(/\s+/g, '').match(/^(\d{1,4})([ab])\.?(\d+)$/);
   if (!m) return null;
   return { column: m[1] + m[2], line: Number(m[3]) };
 }
