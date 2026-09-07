@@ -290,9 +290,15 @@ def run(manifest: Manifest) -> Path:
     for seg in segments:
         seg_base_offset.append(running)
         # line_runs lets the client turn an offset back into a Bekker line
-        # without fetching the whole book-NN.json.
-        line_runs = [[l["n"], len(l["tokens"])] for l in seg["lines"]]
-        running += sum(n for _, n in line_runs)
+        # without fetching the whole book-NN.json. A run is [n, count], or
+        # [n, count, sub] on a lettered line: Bekker's 244b5a is its own line
+        # beside 244b5, and a run that carried only the number cited every
+        # token in it as 244b5 (about 48 lines corpus-wide).
+        line_runs = [
+            [l["n"], len(l["tokens"]), l["sub"]] if l.get("sub") else [l["n"], len(l["tokens"])]
+            for l in seg["lines"]
+        ]
+        running += sum(r[1] for r in line_runs)
         seg_coords.append(
             {"book": seg["book"], "column": seg["column"], "line_runs": line_runs}
         )

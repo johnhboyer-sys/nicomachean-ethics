@@ -108,11 +108,12 @@ def _build(tmp_path, monkeypatch, chapters=()):
 def test_line_runs_follow_stage3_lines_one_run_per_line(tmp_path, monkeypatch):
     """One run per stage3 line, lettered and repeated lines included, so that
     offsetRef() walking the runs lands on the same line stage7 emits at that
-    position. (A run carries only the number: a token on 244b5a is cited as
-    244b5 — line_runs has no slot for the suffix.)"""
+    position. A lettered line carries its suffix as a third element, so a
+    token on 244b5a is cited as 244b5a and not as 244b5; a repeated bare
+    number (DA 430b.20 twice) still has none to carry."""
     offsets = _build(tmp_path, monkeypatch)["offsets"]
     runs = [s["line_runs"] for s in offsets["segments"]]
-    assert runs[0] == [[4, 2], [5, 3], [5, 2], [6, 2]]
+    assert runs[0] == [[4, 2], [5, 3], [5, 2, "a"], [6, 2]]
     assert runs[1] == [[20, 4], [20, 3]]
     assert runs[2] == [[1, 3]]
 

@@ -80,7 +80,12 @@ def check_offsets(offsets: dict, segments: list[dict]) -> dict:
                     f"seg {i} ({seg['id']}): base delta {actual - base[i]} != "
                     f"token count {count}"
                 )
-            expected_runs = [[line["n"], len(line["tokens"])] for line in seg["lines"]]
+            expected_runs = [
+                [line["n"], len(line["tokens"]), line["sub"]]
+                if line.get("sub")
+                else [line["n"], len(line["tokens"])]
+                for line in seg["lines"]
+            ]
             if coords[i]["line_runs"] != expected_runs:
                 problems.append(
                     f"seg {i} ({seg['id']}): line_runs do not match stage3 lines "
