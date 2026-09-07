@@ -2,6 +2,8 @@
 
 *Status: plan only. Nothing here is implemented. Drafted 2026-08-07 from a design session; the formal decision doc (schema with worked examples, adversarially reviewed) is still to come.*
 
+Decision doc: commentary-layer-decisions.md
+
 ***The UI is not settled.*** *What is committed below is information architecture — the two-pole model, the data model, the anchoring. Every visual and interaction treatment is direction, not design. The shipped UI must work really well and be slick, attractive, and functional; each UI phase gets its own design pass with prototypes in the live reader before anything is called final. The mockups are an option-space map, not a spec.*
 
 Mockup artifact (five UI approaches, real DA 402a content): https://claude.ai/code/artifact/1fa4f361-269b-499b-a37f-819e950a45d2
