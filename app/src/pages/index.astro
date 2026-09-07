@@ -1,5 +1,6 @@
 ---
-import { AUTHENTICITY_LABEL, CATEGORIES, getWork, workLanding, type Work } from '@shared/lib/works';
+import { AUTHENTICITY_LABEL, CATEGORIES, workLanding } from '@shared/lib/works';
+import { builtWorkCards, buildDivisions } from '../lib/corpus';
 import { SUPPORT_URL } from '../lib/support';
 import CommandPalette from '@shared/components/CommandPalette.svelte';
 import ThemeInit from '../components/ThemeInit.astro';
@@ -17,47 +18,17 @@ const homeDescription =
   ' dictionary lookup, Bekker citation, and full-text search across the corpus.';
 const canonical = Astro.site ? new URL(`${base}/`, Astro.site).href : undefined;
 const ogImage = Astro.site ? new URL(`${base}/og-default.png`, Astro.site).href : undefined;
-// Resolve the corpus taxonomy into per-division view models. Each division holds
-// either a flat list of cards or labelled sub-groups (Natural Philosophy). A
-// card is an existing work (clickable → its landing page) or a "coming soon"
-// placeholder (works not yet added). Each card row becomes a single tappable
-// card; the editions/translations live on the work's landing page (/<work>).
-type Card =
-  | { kind: 'work'; work: Work }
-  | { kind: 'soon'; title: string };
-
-interface Division {
-  numeral: string;
-  title: string;
-  appendix: boolean;                              // spurious appendix — no numeral, set off by a rule
-  count: number;                                  // total cards (works + soon)
-  groups: { ref?: string; label?: string; cards: Card[] }[];
-}
-
-const toCards = (ws: { id?: string; title?: string }[]): Card[] =>
-  ws.flatMap((cw) => {
-    const w = cw.id ? getWork(cw.id) : undefined;
-    if (w) return [{ kind: 'work', work: w } as Card];
-    if (cw.title) return [{ kind: 'soon', title: cw.title } as Card];
-    return [];
-  });
-
-const divisions: Division[] = CATEGORIES.map((cat) => {
-  const groups = cat.subcategories
-    ? cat.subcategories.map((sub) => ({ ref: sub.ref, label: sub.label, cards: toCards(sub.works) }))
-    : [{ cards: toCards(cat.works ?? []) }];
-  const count = groups.reduce((n, g) => n + g.cards.length, 0);
-  return { numeral: cat.numeral, title: cat.title, appendix: !!cat.appendix, count, groups };
-});
+// Resolve the corpus taxonomy into per-division view models (../lib/corpus).
+// Each card row becomes a single tappable card; the editions/translations live
+// on the work's landing page (/<work>).
+const divisions = buildDivisions(CATEGORIES);
 
 // Structured data: identify the site (WebSite) and enumerate every built work as
 // an ItemList of CreativeWorks linking to its landing page. This tells Google the
 // home page is the hub for the whole corpus, reinforcing the per-work pages that
 // carry the long-tail "<work> greek & english" queries. Absolute URLs need
 // Astro.site (set in config); emitted only when present.
-const builtWorks = divisions.flatMap((d) =>
-  d.groups.flatMap((g) => g.cards.filter((c): c is Extract<Card, { kind: 'work' }> => c.kind === 'work')),
-);
+const builtWorks = builtWorkCards(divisions);
 const structuredData = Astro.site
   ? [
       {

@@ -17,6 +17,7 @@ import ThemeToggle from './ThemeToggle.astro';
 import { getWork, bookLabel, isBookless, workPath, workLanding } from '@shared/lib/works';
 import { SUPPORT_URL } from '../lib/support';
 import { jsonLdSafe } from '../lib/jsonld';
+import { chapterHref as chapterHrefFor, translatorName as translatorPerson } from '../lib/nav';
 
 interface Props { workId: string; n: number; }
 const { workId, n } = Astro.props as Props;
@@ -75,8 +76,7 @@ const outline = Array.from({ length: work.books }, (_, i) => {
   const b = i + 1;
   return { book: b, label: bookLabel(work, b), chapters: allChapters[String(b)] ?? [] };
 });
-const chapterHref = (b: number, chapter: string) =>
-  b === n ? `#ch-${b}-${chapter}` : `${base}${workPath(workId, b)}#ch-${b}-${chapter}`;
+const chapterHref = (b: number, chapter: string) => chapterHrefFor(base, workId, n, b, chapter);
 // The visible tab title + og:title. Front-loads the work name (what people
 // search) and appends the parallel-text long-tail phrasing ("greek english
 // translation") that these deep book pages can realistically rank for, since
@@ -95,7 +95,7 @@ const bookSuffix = bookless ? '' : `, Book ${label}`;
 const primaryTrans =
   work.translations.find((t) => t.slot === 'english') ?? work.translations[0];
 // Translator entries read "Name (Publisher, Year)"; keep just the person name.
-const translatorName = primaryTrans?.name.split(' (')[0] ?? '';
+const translatorName = translatorPerson(primaryTrans?.name);
 const canonical = Astro.site
   ? new URL(`${base}${workPath(workId, n)}/`, Astro.site).href
   : undefined;
@@ -185,8 +185,35 @@ const intro =
   <!-- Display faces used only by the print masthead; media="print" defers the
        fetch so it never costs the on-screen reader. -->
   <link href="https://fonts.googleapis.com/css2?family=Bodoni+Moda:ital,wght@1,600&family=DM+Mono:wght@400&display=swap" rel="stylesheet" media="print" />
+  <style>
+    /* Off-screen until focused, then a solid panel over the header. Not
+       `.sr-only`: that clips the element even when focused. */
+    .skip-to-text {
+      position: absolute;
+      left: 0.5rem;
+      top: -3rem;
+      z-index: 100;
+      font-family: var(--font-ui);
+      font-size: 1rem;
+      padding: 0.6rem 1rem;
+      color: var(--text);
+      background: var(--page-bg);
+      border: 2px solid var(--accent);
+      border-radius: 6px;
+      text-decoration: none;
+      transition: top 0.12s ease;
+    }
+    .skip-to-text:focus { top: 0.5rem; }
+    #reading-text:focus { outline: none; }
+  </style>
 </head>
 <body data-work={workId} data-book={n} data-books={work.books} data-base={base}>
+  <!-- Bypass blocks (WCAG 2.4.1): the header carries ~8 controls before the
+       text, and the drawer's outline is only kept out of the tab order by
+       `inert`. This is the first focusable element on the page and is visible
+       only while focused; it targets the anchor placed just above the Reader
+       island at the foot of this file. -->
+  <a class="skip-to-text" href="#reading-text">Skip to the text</a>
   <!-- Semantic page heading + topical intro for search engines and screen
        readers. Visually hidden because the visible title is the work-switcher
        control; this gives the document a real, descriptive <h1> and a prose
@@ -197,7 +224,11 @@ const intro =
   </header>
   <header class="page-header">
     <div class="header-bar">
-      <button type="button" class="toc-toggle" aria-expanded="false" aria-controls="toc-sidebar">
+      <!-- aria-label, not the visible text alone: .toc-toggle-text is
+           display:none on every phone (global.css, the ≤680px and the
+           landscape blocks), which would leave this button with no
+           accessible name at all — the icon span is aria-hidden. -->
+      <button type="button" class="toc-toggle" aria-label="Contents" aria-expanded="false" aria-controls="toc-sidebar">
         <span class="toc-toggle-icon" aria-hidden="true">☰</span><span class="toc-toggle-text">Contents</span>
       </button>
       <div class="header-title">
@@ -445,6 +476,10 @@ const intro =
   </script>
 
   <CommandPalette work={workId} client:load />
+  <!-- The skip link's target. The Reader island owns .reader-body (role=main)
+       and is a shared component, so the anchor sits just outside it: an empty
+       inline span takes no space and moves nothing. -->
+  <span id="reading-text" tabindex="-1"></span>
   <Reader work={workId} bookNum={n} bookData={bookData} chapterTitles={chapterTitles[String(n)] ?? {}} transTitles={bookTransTitles} client:load />
 </body>
 </html>
