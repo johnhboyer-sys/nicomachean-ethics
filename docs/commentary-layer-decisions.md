@@ -518,6 +518,37 @@ Each is a function of the sidecar files plus the work's spine (`build/stage1`) a
 
 Gate 2's Greek branch is expected to produce `variant-reading` often for Hicks and the CAG authors (plan unknown 7). That is scholarly content, not an error; only `error` blocks.
 
+### 6a. What is built (2026-09-07)
+
+`pipeline/aristotle_pipeline/commentary.py` implements the gates above as pure
+functions over the sidecar plus the work's spine and manifest — nothing in it
+reads a file, the way `quality.check_breathing` takes its tokens and allowlist
+as arguments. `check_all` runs them and returns a report in
+`stage2_validate` house style; a stage 7 step will call it per commentary and
+refuse to emit that commentary (not the work) on a FAIL. 46 tests
+(`pipeline/tests/test_commentary.py`), one passing shape and every failing
+shape per gate, fixtured on the worked examples of §3.
+
+Two gates are NOT implemented, and the report says so rather than omitting
+them: a `skipped` check carries `ok: None` and its reason, so a green report
+cannot be read as "everything was checked".
+
+- **Gate 6, HTML safety** belongs where the sanitizer is. Re-stating
+  `sanitizeHtml`'s allowlist in Python would drift from it, and a drifted
+  sanitizer gate is worse than none; it wants a Node step that imports the real
+  function (`shared/scripts/audit-forms-block.mjs` shows the esbuild route).
+- **Gate 9's divergence threshold** is open question 3 and unset, so the rate
+  is reported as a warning and John's sample review is the pass. The rest of
+  gate 9 — every field filled, flags resolved, the audit trail where it says,
+  generation reading a `grc` stream — is checked.
+
+`stitch_fragments` implements §2.4: fragments fold into one tree by range
+containment, deepest container wins, and a fragment nothing contains comes back
+as an orphan for gate 3 to fail on.
+
+Nothing here is wired into a stage yet: the ingestion stack is open question 1,
+and these gates are the part of the decision that does not depend on its answer.
+
 ## 7. Open questions
 
 Each waits on a decision; owner is John unless stated.
