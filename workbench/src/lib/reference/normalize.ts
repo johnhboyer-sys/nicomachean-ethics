@@ -5,8 +5,8 @@
 // is English prose and diacritic folding has no business here.
 //
 // The line-ending/soft-hyphen/hyphen-rejoin logic mirrors (does not import)
-// the equivalent handling in import/parseImportFile.ts's
-// normalizeLineEndings() and import/scrivenerMd.ts's hyphen-rejoin pass --
+// the equivalent handling in chapterfile/text.ts's normalizeText() and
+// import/scrivenerMd.ts's hyphen-rejoin pass --
 // duplicated here per this module's scope boundary (reference/** owns its
 // own normalization; it does not reach into import/**).
 

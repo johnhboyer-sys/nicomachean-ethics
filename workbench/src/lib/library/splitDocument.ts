@@ -27,7 +27,8 @@
 
 import type { CitationScheme } from '../citation/types';
 import { getScheme } from '../citation/registry';
-import type { ChapterFile, ChapterFileMeta, Footnote, HeaderMark } from '../chapterfile';
+import type { ChapterFile, ChapterFileMeta, Footnote, HeaderMark, PerRowKeys, RebaseRule } from '../chapterfile';
+import { CHAPTER_FILE_META_RULES, CHAPTER_FILE_RULES, isPerRowRule } from '../chapterfile';
 import type { NavRole, WorkProfile } from '../works/profile';
 import { navRoleOf } from '../works/profile';
 /** One chapter of a document's derived structure — a label, nothing more. */
@@ -50,6 +51,49 @@ export interface DocumentPart {
 
 /** `{^<id>:` footnote-marker opener in a raw [ENGLISH] row string. */
 const MARKER_RE = /\{\^(\d+):/g;
+
+type PerRowSection = PerRowKeys<ChapterFile, typeof CHAPTER_FILE_RULES>;
+type PerRowMetaField = PerRowKeys<ChapterFileMeta, typeof CHAPTER_FILE_META_RULES>;
+
+/**
+ * The per-row fields, in declaration order (which is also the output order),
+ * read from the classification in chapterfile/types.ts rather than listed
+ * here by hand — a field added there must be classified before tsc passes,
+ * and a per-row one is then sliced below without this file changing.
+ */
+const PER_ROW_SECTIONS = (Object.keys(CHAPTER_FILE_RULES) as (keyof ChapterFile)[]).filter(
+  (k): k is PerRowSection => isPerRowRule(CHAPTER_FILE_RULES[k]),
+);
+const PER_ROW_META_FIELDS = (Object.keys(CHAPTER_FILE_META_RULES) as (keyof ChapterFileMeta)[]).filter(
+  (k): k is PerRowMetaField => isPerRowRule(CHAPTER_FILE_META_RULES[k]),
+);
+
+/** The keys of T whose value is a row-parallel string array (or absent). */
+type RowArrayKeys<T> = { [P in keyof T]-?: T[P] extends string[] | undefined ? P : never }[keyof T];
+
+/**
+ * The part's slice of every per-row field of `source` (a ChapterFile or its
+ * meta), keyed as in the source. An optional section is present only when
+ * some row of the slice is non-empty. `K extends RowArrayKeys<T>` is the
+ * shape check: a field classified per-row that is not a row-parallel string
+ * array fails at the call site at compile time.
+ */
+function sliceRows<T, K extends RowArrayKeys<T>>(
+  source: T,
+  keys: K[],
+  rules: Record<K, RebaseRule>,
+  start: number,
+  end: number,
+): { [P in K]?: string[] } {
+  const out: { [P in K]?: string[] } = {};
+  for (const key of keys) {
+    const lines = source[key] as string[] | undefined;
+    if (lines === undefined) continue;
+    const slice = lines.slice(start, end);
+    if (rules[key] === 'per-row' || slice.some((l) => l.length > 0)) out[key] = slice;
+  }
+  return out;
+}
 
 /** Footnote ids whose markers appear in the given [ENGLISH] row strings. */
 function markerIdsInLines(lines: string[]): Set<number> {
@@ -112,13 +156,11 @@ function rebase(file: ChapterFile, scheme: CitationScheme, seg: Segment): Chapte
   const { book, chapter, start, end } = seg;
   const n = end - start;
 
-  const greekLines = file.greekLines.slice(start, end);
-  const englishLines = file.englishLines.slice(start, end);
-  const paraSlice = file.englishParaLines?.slice(start, end);
-  // serializeChapterFile omits an all-empty [ENGLISH.PARA]; only carry the
-  // section when some row has paragraph text (matches autosave's own rule, so
-  // the part round-trips without a phantom section).
-  const englishParaLines = paraSlice?.some((l) => l.length > 0) ? paraSlice : undefined;
+  // Every per-row section ([GREEK], [ENGLISH], and the optional
+  // [ENGLISH.PARA] / [HEADING_TITLES]) takes the part's slice; see
+  // CHAPTER_FILE_RULES for which ride along only when some row has text.
+  const sections = sliceRows(file, PER_ROW_SECTIONS, CHAPTER_FILE_RULES, start, end);
+  const englishLines = sections.englishLines ?? [];
 
   const headers: HeaderMark[] = (file.meta.headers ?? [])
     .filter((h) => h.row >= start + 1 && h.row <= end)
@@ -129,27 +171,24 @@ function rebase(file: ChapterFile, scheme: CitationScheme, seg: Segment): Chapte
     .map((p) => p - start);
 
   // A source import's rows carry the source's own citations; a part keeps its
-  // slice of them, and its spans and split refs are those addresses rather
-  // than re-based ordinals (they are what hydration labels the rows with).
-  const rowRefs = file.meta.rowRefs?.slice(start, end);
-  const refRow = (ref: string): number | null => {
-    if (!file.meta.rowRefs) return null;
-    const at = file.meta.rowRefs.indexOf(ref);
+  // slice of them (row_refs is per-row), and its spans and split refs are
+  // those addresses rather than re-based ordinals (they are what hydration
+  // labels the rows with).
+  const metaRows = sliceRows(file.meta, PER_ROW_META_FIELDS, CHAPTER_FILE_META_RULES, start, end);
+  const sourceRefs = file.meta.rowRefs;
+  const rowRefs = metaRows.rowRefs;
+  const refRow = (refs: string[], ref: string): number | null => {
+    const at = refs.indexOf(ref);
     return at >= 0 ? at + 1 : null;
   };
 
   const lineSplits = file.meta.lineSplits
     ?.map((ls) => {
-      const g = rowRefs ? refRow(ls.ref) : ordinalOf(ls.ref);
+      const g = sourceRefs ? refRow(sourceRefs, ls.ref) : ordinalOf(ls.ref);
       if (g === null || g < start + 1 || g > end) return null;
-      return { ref: rowRefs ? ls.ref : documentOrdinalAddress(scheme, g - start).raw, offset: ls.offset };
+      return { ref: sourceRefs ? ls.ref : documentOrdinalAddress(scheme, g - start).raw, offset: ls.offset };
     })
     .filter((x): x is { ref: string; offset: number } => x !== null);
-
-  // Heading title overrides are per row like the other sections; dropping
-  // them printed the translation where the rail shows "Objection 2".
-  const titleSlice = file.headingTitleLines?.slice(start, end);
-  const headingTitleLines = titleSlice?.some((t) => t.length > 0) ? titleSlice : undefined;
 
   const ids = markerIdsInLines(englishLines);
   const footnotes: Footnote[] = file.footnotes.filter((f) => ids.has(f.id));
@@ -164,7 +203,7 @@ function rebase(file: ChapterFile, scheme: CitationScheme, seg: Segment): Chapte
     spanEnd: n > 0 ? (rowRefs ? rowRefs[n - 1] : documentOrdinalAddress(scheme, n).raw) : '',
     // document works carry no column_starts; key order below mirrors
     // parseChapterFile's meta construction (round-trip self-check compares JSON).
-    ...(rowRefs && rowRefs.length > 0 ? { rowRefs } : {}),
+    ...metaRows,
     ...(lineSplits && lineSplits.length > 0 ? { lineSplits } : {}),
     ...(paragraphStarts && paragraphStarts.length > 0 ? { paragraphStarts } : {}),
     ...(headers.length > 0 ? { headers } : {}),
@@ -172,10 +211,9 @@ function rebase(file: ChapterFile, scheme: CitationScheme, seg: Segment): Chapte
 
   return {
     meta,
-    greekLines,
-    englishLines,
-    ...(englishParaLines ? { englishParaLines } : {}),
-    ...(headingTitleLines ? { headingTitleLines } : {}),
+    // sliceRows sets every 'per-row' key (greekLines, englishLines); only the
+    // optional sections can be absent, which is what ChapterFile allows.
+    ...(sections as Pick<ChapterFile, PerRowSection>),
     footnotes,
   };
 }

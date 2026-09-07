@@ -67,6 +67,7 @@
  */
 
 import yaml from 'js-yaml';
+import { normalizeText } from './text';
 import type { SchemeId } from '../citation/types';
 import { getScheme, isKnownScheme } from '../citation/registry';
 import type { ChapterFile, ChapterFileMeta, ColumnStart, Footnote, HeaderMark, LineSplit, RowHeaderLevel } from './types';
@@ -104,13 +105,6 @@ function unescapeFootnoteContinuation(line: string): string {
 }
 const SECTION_HEADERS = ['[GREEK]', '[ENGLISH]', '[ENGLISH.PARA]', '[HEADING_TITLES]', '[FOOTNOTES]'] as const;
 type SectionHeader = (typeof SECTION_HEADERS)[number];
-
-function normalizeLineEndings(raw: string): string {
-  // A byte-order mark is not content: an editor that writes one (Notepad,
-  // some Windows tools on a shared folder) must not make the file unopenable.
-  const text = raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw;
-  return text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-}
 
 /**
  * Fold Unicode U+2028 LINE SEPARATOR / U+2029 PARAGRAPH SEPARATOR to a real
@@ -689,7 +683,7 @@ function parseFootnotes(lines: string[], sectionStartLine: number, source: strin
 // ── entry points ─────────────────────────────────────────────────────────────
 
 export function parseChapterFile(raw: string, source = '<chapterfile>'): ChapterFile {
-  const normalized = normalizeLineEndings(raw);
+  const normalized = normalizeText(raw);
   const { meta, rest, columnStartsLine, rowRefsLine, paragraphStartsSanitized } = parseFrontmatter(normalized, source);
   const sections = splitSections(rest, source);
 

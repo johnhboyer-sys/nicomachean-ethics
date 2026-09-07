@@ -26,6 +26,7 @@
  */
 
 import yaml from 'js-yaml';
+import { normalizeText } from '../chapterfile/text';
 import {
   detectFormat,
   normalizeScrivenerPair,
@@ -91,13 +92,6 @@ const FRONTMATTER_RE = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/;
 const SECTION_HEADERS = ['[GREEK]', '[ENGLISH]'] as const;
 type SectionHeader = (typeof SECTION_HEADERS)[number];
 
-function normalizeLineEndings(raw: string): string {
-  // A byte-order mark (some Windows editors write one) is not content and
-  // must not read as "the file has no header".
-  const text = raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw;
-  return text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-}
-
 function fail(kind: ImportParseFailureKind, message: string, detail: string): ImportParseFailure {
   return { ok: false, kind, message, detail };
 }
@@ -146,7 +140,7 @@ function trimBlankEdges(lines: string[]): string[] {
 }
 
 export function parseImportFile(raw: string): ImportParseResult {
-  const normalized = normalizeLineEndings(raw);
+  const normalized = normalizeText(raw);
 
   const m = FRONTMATTER_RE.exec(normalized);
   if (!m) {

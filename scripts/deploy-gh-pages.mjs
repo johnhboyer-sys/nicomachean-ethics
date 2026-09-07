@@ -6,8 +6,8 @@
 //   npm run deploy         — clone, rsync, restore, leak-check, commit, push
 //   npm run deploy:dry     — everything up to the commit; nothing leaves this machine
 //
-// Flags: --dry-run  --remote=<url>  --dist=<path>  --allow-data-deletions
-//        --verify  --skip-link-check  --help
+// Flags: --dry-run  --remote=<url>  --dist=<path>
+//        --allow-data-deletions[=<prefix>[,<prefix>]]  --verify  --skip-link-check  --help
 //
 // The pure functions are exported so scripts/__tests__/deploy-gh-pages.test.mjs
 // can exercise them without a clone, a dist or a network.
@@ -22,20 +22,23 @@ const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 export const LIVE_BASE = 'https://johnhboyer-sys.github.io/aristotle-reader';
 export const BRANCH = 'gh-pages';
 
-// Files that live ONLY on the live site. An app-only build does not emit them,
-// so `rsync --delete` stages them for deletion and a plain commit would remove a
-// live feature. Each deleted path under one of these prefixes is restored from
-// the clone's HEAD (`git checkout HEAD -- <path>`) after the rsync. Restore is
-// per deleted path, never the whole prefix: a full corpus rebuild regenerates
-// data/reports itself (2026-08-22), and a blanket checkout would overwrite the
-// fresh reports with the stale live ones.
+// Deletions under data/. An app-only build does not emit everything the live
+// site serves, so `rsync --delete` stages live-only files for deletion and a
+// plain commit would remove a live feature. The first two cases, both found by
+// reading the deletion list:
 //   data/reports          — pipeline quality reports; untracked in git, only 12 of
 //                           88 exist locally (caught 2026-08-19)
 //   data/Meta/quotations.json — generated in a worktree on 2026-08-22 and never
 //                           landed in the main checkout (caught 2026-08-30)
-// Any OTHER deletion under data/ is a third such case until proven otherwise:
-// the script refuses unless --allow-data-deletions is passed.
-export const RESTORE_PATHS = ['data/reports', 'data/Meta/quotations.json'];
+// The rule they taught, applied since 2026-09-07 without a hand-kept list: a
+// deletion under data/ that is a file at gh-pages HEAD is a live-only file
+// until proven otherwise. Every such path is restored from the clone's HEAD
+// (`git checkout HEAD -- <path>`) after the rsync and reported; a deletion goes
+// through only under a prefix named in --allow-data-deletions=<prefix>[,...]
+// (a bare --allow-data-deletions allows all of data/). Restore is per deleted
+// path, never a whole directory: a full corpus rebuild regenerates data/reports
+// itself (2026-08-22), and a blanket checkout would overwrite the fresh reports
+// with the stale live ones.
 
 // Gated translations: their translators' names must not appear in served data.
 export const LEAK_NAMES = ['Ackrill', 'Tredennick', 'Irwin', 'Rackham'];
@@ -65,14 +68,15 @@ export function parseArgs(argv) {
     dryRun: false,
     remote: null,
     dist: null,
-    allowDataDeletions: false,
+    allowDataDeletions: [],
     verify: false,
     skipLinkCheck: false,
     help: false,
   };
   for (const arg of argv) {
     if (arg === '--dry-run') options.dryRun = true;
-    else if (arg === '--allow-data-deletions') options.allowDataDeletions = true;
+    else if (arg === '--allow-data-deletions') options.allowDataDeletions = ['data'];
+    else if (arg.startsWith('--allow-data-deletions=')) options.allowDataDeletions = parseDataPrefixes(arg.slice('--allow-data-deletions='.length));
     else if (arg === '--verify') options.verify = true;
     else if (arg === '--skip-link-check') options.skipLinkCheck = true;
     else if (arg === '--help' || arg === '-h') options.help = true;
@@ -81,6 +85,17 @@ export function parseArgs(argv) {
     else throw new Error(`Unknown option: ${arg}`);
   }
   return options;
+}
+
+// The prefixes of `--allow-data-deletions=<prefix>[,<prefix>]`, each `data` or
+// under `data/` (the audit only ever looks there, so anything else is a typo).
+export function parseDataPrefixes(text) {
+  const prefixes = text.split(',').map((p) => p.trim().replace(/\/+$/, '')).filter(Boolean);
+  if (!prefixes.length) throw new Error('--allow-data-deletions= needs at least one prefix under data/');
+  for (const p of prefixes) {
+    if (!underPrefix(p, 'data')) throw new Error(`--allow-data-deletions prefix must be data or lie under data/: ${p}`);
+  }
+  return prefixes;
 }
 
 // One line of `rsync -i` output → { op, path } or null for noise.
@@ -153,30 +168,30 @@ function underPrefix(relPath, prefix) {
   return relPath === prefix || relPath.startsWith(`${prefix}/`);
 }
 
-// Split rsync's deletion list three ways: paths the restore list covers (put
-// back after the rsync), paths under data/ it does NOT cover (a new trap unless
-// --allow-data-deletions), and everything else (bundle rehashes, dropped pages).
-export function auditDataDeletions(deleted, restorePaths = RESTORE_PATHS) {
+// The fate of rsync's deletions under data/ (the policy at the top of this
+// file). `deleted` is rsync's deletion list (files and directories, trailing
+// slash already stripped); `liveFiles` the set of paths that are FILES at the
+// clone's HEAD (one `git ls-tree -r --name-only` — directories are not in it,
+// so a deleted directory is decided through its files); `allowedPrefixes` the
+// --allow-data-deletions list, matched on whole path segments. A live file
+// under data/ is restored unless an allowed prefix covers it, in which case it
+// is deleted. Deletions outside data/ (bundle rehashes, dropped pages) are not
+// this audit's business; the deploy diff reports them by category.
+export function auditDataDeletions(deleted, liveFiles, allowedPrefixes = []) {
   const restore = [];
-  const unexpected = [];
-  const other = [];
+  const del = [];
   for (const raw of deleted) {
     const p = raw.replace(/\/$/, '');
-    if (restorePaths.some((prefix) => underPrefix(p, prefix))) restore.push(p);
-    else if (underPrefix(p, 'data')) unexpected.push(p);
-    else other.push(p);
+    if (!underPrefix(p, 'data') || !liveFiles.has(p)) continue;
+    if (allowedPrefixes.some((prefix) => underPrefix(p, prefix))) del.push(p);
+    else restore.push(p);
   }
-  return { restore, unexpected, other };
+  return { restore, delete: del };
 }
 
+// `needle` is never empty (LEAK_NAMES and POSITIVE_CONTROL are literals).
 function countOccurrences(text, needle) {
-  let count = 0;
-  let at = text.indexOf(needle);
-  while (at !== -1) {
-    count++;
-    at = text.indexOf(needle, at + needle.length);
-  }
-  return count;
+  return text.split(needle).length - 1;
 }
 
 // Scan `files` — an iterable of { path, text } (path relative to the site root,
@@ -308,6 +323,24 @@ function git(args, options = {}) {
   return run('git', args, { capture: true, ...options }).trim();
 }
 
+// The paths that are files at the clone's HEAD under the data/ subtrees
+// `deleted` touches — one ls-tree per deploy, where a `git cat-file -e` per
+// restored path was ~90 spawns. NUL-separated so a non-ASCII name is not
+// quoted. Without a pathspec ls-tree would list the whole tree, so no data/
+// deletion means an empty set without a spawn.
+function liveDataFiles(clone, deleted) {
+  const prefixes = new Set();
+  for (const raw of deleted) {
+    const p = raw.replace(/\/$/, '');
+    if (!underPrefix(p, 'data')) continue;
+    const parts = p.split('/');
+    prefixes.add(parts.length >= 2 ? `${parts[0]}/${parts[1]}` : parts[0]);
+  }
+  if (!prefixes.size) return new Set();
+  const out = run('git', ['ls-tree', '-r', '-z', '--name-only', 'HEAD', '--', ...prefixes], { cwd: clone, capture: true });
+  return new Set(out.split('\0').filter(Boolean));
+}
+
 function hasCommand(name) {
   const result = spawnSync(name, ['--version'], { stdio: 'ignore' });
   return !result.error;
@@ -344,13 +377,15 @@ function heading(text) {
 
 function usage() {
   console.log(`Usage: node scripts/deploy-gh-pages.mjs [--dry-run] [--remote=<url>] [--dist=<path>]
-                                        [--allow-data-deletions] [--verify] [--skip-link-check]
+                                        [--allow-data-deletions[=<prefix>[,<prefix>]]] [--verify] [--skip-link-check]
 
   --dry-run               clone, rsync into the temp clone, restore, leak-check, report;
                           no commit, no push
   --remote=<url>          gh-pages remote (default: this repo's origin)
   --dist=<path>           built site (default: app/dist)
-  --allow-data-deletions  permit deletions under data/ that RESTORE_PATHS does not cover
+  --allow-data-deletions  let deletions under data/ through instead of restoring them from
+                          gh-pages HEAD; =<prefix>[,<prefix>] limits that to those prefixes
+                          (each data or under data/), bare means all of data/
   --verify                after pushing, poll the live URLs until they answer as expected
   --skip-link-check       do not run scripts/check-links.mjs on the dist first`);
 }
@@ -453,33 +488,24 @@ async function main() {
     } else {
       console.log('  (no deletions)');
     }
-    const audit = auditDataDeletions(itemized.deleted);
-    console.log(`  restore after rsync (covered by RESTORE_PATHS): ${audit.restore.length}`);
-    if (audit.unexpected.length) {
-      console.log(`  deletions under data/ NOT covered by RESTORE_PATHS: ${audit.unexpected.length}`);
-      for (const line of formatCategoryReport(groupByCategory(audit.unexpected))) console.log(line);
-      if (!options.allowDataDeletions) {
-        fail(`${audit.unexpected.length} deletion(s) under data/ are not in RESTORE_PATHS. Every such case so far was a live feature the local build does not have. Read them in context; then either add them to RESTORE_PATHS in scripts/deploy-gh-pages.mjs or re-run with --allow-data-deletions.`);
-      }
-      console.log('  --allow-data-deletions given: these WILL be deleted from live.');
+    const audit = auditDataDeletions(itemized.deleted, liveDataFiles(clone, itemized.deleted), options.allowDataDeletions);
+    console.log(`  live files under data/ to restore after rsync (every one is a live-only file until proven otherwise): ${audit.restore.length}`);
+    if (audit.delete.length) {
+      console.log(`  live files under data/ let through by --allow-data-deletions=${options.allowDataDeletions.join(',')} — these WILL be deleted from live: ${audit.delete.length}`);
+      for (const line of formatCategoryReport(groupByCategory(audit.delete))) console.log(line);
     }
 
     // 4. Real rsync + restore ----------------------------------------------
     heading('rsync into the clone');
     run('rsync', rsyncArgs);
     if (audit.restore.length) {
-      const restorable = audit.restore.filter((p) => {
-        const probe = spawnSync('git', ['cat-file', '-e', `HEAD:${p}`], { cwd: clone, stdio: 'ignore' });
-        return probe.status === 0;
-      });
-      for (let i = 0; i < restorable.length; i += 200) {
-        run('git', ['checkout', 'HEAD', '--', ...restorable.slice(i, i + 200)], { cwd: clone, capture: true });
+      for (let i = 0; i < audit.restore.length; i += 200) {
+        run('git', ['checkout', 'HEAD', '--', ...audit.restore.slice(i, i + 200)], { cwd: clone, capture: true });
       }
-      const grouped = groupByCategory(restorable);
-      console.log(`  restored ${restorable.length} live file(s) from ${BRANCH} HEAD:`);
-      for (const [category, paths] of grouped) console.log(`    ${category}: ${paths.length}`);
+      console.log(`  restored ${audit.restore.length} live file(s) from ${BRANCH} HEAD:`);
+      for (const line of formatCategoryReport(groupByCategory(audit.restore), { indent: '    ' })) console.log(line);
     } else {
-      console.log('  nothing to restore (every RESTORE_PATHS file is in the dist, or was never live)');
+      console.log('  nothing to restore (no deletion under data/ is a file at HEAD)');
     }
 
     // 5. Leak check on the clone's data JSON -------------------------------

@@ -261,15 +261,12 @@ export function chapterFileFromModel(model: ChapterModel, spans: ChapterSpans = 
   for (let i = 0; i < model.rows.length; i++) {
     const row = model.rows[i];
     if (!row.splitOffsets || row.splitOffsets.length === 0) continue;
-    // A split's ref must be the label hydration will give the row: its own
-    // address when the file carries row_refs, the ordinal for the other
-    // document spines, the row address for a corpus spine.
+    // A split's ref must be the label hydration will give the row: the
+    // ordinal for a document spine without row_refs, the row's own address
+    // otherwise (with row_refs, rowRefs[i] IS row.address.raw — see
+    // sourceRowRefs; for a corpus spine the address is the label).
     const ref =
-      rowRefs !== undefined
-        ? rowRefs[i]
-        : scheme.spineSource === 'document'
-          ? documentOrdinalAddress(scheme, i + 1).raw
-          : row.address.raw;
+      scheme.spineSource === 'document' && rowRefs === undefined ? documentOrdinalAddress(scheme, i + 1).raw : row.address.raw;
     if (ref === '') continue;
     for (const offset of row.splitOffsets) {
       lineSplits.push({ ref, offset });

@@ -7,7 +7,6 @@ import assert from 'node:assert/strict';
 import {
   KNOWN_BENIGN,
   LEAK_NAMES,
-  RESTORE_PATHS,
   auditDataDeletions,
   categorize,
   commitMessage,
@@ -15,6 +14,7 @@ import {
   formatCategoryReport,
   groupByCategory,
   parseArgs,
+  parseDataPrefixes,
   parseNameStatus,
   parseRsyncItemized,
   scanForLeaks,
@@ -87,34 +87,63 @@ test('groupByCategory reports counts per category, never a bare total', () => {
   assert.ok(lines.includes('data/Meta: 1'));
 });
 
-// -- restore-list gating -----------------------------------------------------
+// -- data/ deletion audit ----------------------------------------------------
 
-test('RESTORE_PATHS carries exactly the two documented live-only paths', () => {
-  assert.deepEqual(RESTORE_PATHS, ['data/reports', 'data/Meta/quotations.json']);
-});
+// Files at gh-pages HEAD, as one `git ls-tree -r --name-only` would list them:
+// files only, so the deleted directory lemma/syzeo is not in it.
+const LIVE_FILES = new Set([
+  'data/reports/quality_EN.json',
+  'data/reports/quality_Meta.json',
+  'data/Meta/quotations.json',
+  'data/APo/third-titles.json',
+  '_astro/Reader.DZMUvdM2.js',
+  'lemma/syzeo/index.html',
+]);
 
-test('auditDataDeletions restores covered paths and flags any other data/ deletion', () => {
-  const audit = auditDataDeletions(parseRsyncItemized(RSYNC_DRY_RUN).deleted);
+test('auditDataDeletions restores every live file under data/ by default and ignores the rest', () => {
+  const audit = auditDataDeletions(parseRsyncItemized(RSYNC_DRY_RUN).deleted, LIVE_FILES);
   assert.deepEqual(audit.restore, [
     'data/reports/quality_EN.json',
     'data/reports/quality_Meta.json',
     'data/Meta/quotations.json',
+    'data/APo/third-titles.json',
   ]);
-  assert.deepEqual(audit.unexpected, ['data/APo/third-titles.json']);
-  assert.deepEqual(audit.other, ['_astro/Reader.DZMUvdM2.js', 'lemma/syzeo/index.html', 'lemma/syzeo']);
+  assert.deepEqual(audit.delete, []);
 });
 
-test('auditDataDeletions matches whole path segments, not string prefixes', () => {
-  const audit = auditDataDeletions(['data/reports-old/x.json', 'data/reports', 'data/Meta/quotations.json.bak'], RESTORE_PATHS);
-  assert.deepEqual(audit.restore, ['data/reports']);
-  assert.deepEqual(audit.unexpected, ['data/reports-old/x.json', 'data/Meta/quotations.json.bak']);
+test('auditDataDeletions lets a deletion through only under an allowed prefix', () => {
+  const deleted = parseRsyncItemized(RSYNC_DRY_RUN).deleted;
+  const audit = auditDataDeletions(deleted, LIVE_FILES, ['data/APo', 'data/Meta/quotations.json']);
+  assert.deepEqual(audit.restore, ['data/reports/quality_EN.json', 'data/reports/quality_Meta.json']);
+  assert.deepEqual(audit.delete, ['data/Meta/quotations.json', 'data/APo/third-titles.json']);
+  const all = auditDataDeletions(deleted, LIVE_FILES, ['data']);
+  assert.deepEqual(all.restore, []);
+  assert.equal(all.delete.length, 4);
+});
+
+test('auditDataDeletions matches allowed prefixes on whole path segments, not string prefixes', () => {
+  const live = new Set(['data/reports-old/x.json', 'data/reports/y.json', 'data/Meta/quotations.json.bak']);
+  const audit = auditDataDeletions([...live], live, ['data/reports', 'data/Meta/quotations.json']);
+  assert.deepEqual(audit.delete, ['data/reports/y.json']);
+  assert.deepEqual(audit.restore, ['data/reports-old/x.json', 'data/Meta/quotations.json.bak']);
+});
+
+test('a data/ deletion that is not a file at HEAD (a directory, or never live) is neither restored nor reported', () => {
+  const audit = auditDataDeletions(['data/reports', 'data/reports/', 'data/new/never-live.json'], new Set(['data/reports/x.json']));
+  assert.deepEqual(audit, { restore: [], delete: [] });
 });
 
 test('a bundle rehash and a dropped lemma page are not data deletions', () => {
-  const audit = auditDataDeletions(['_astro/global.old.css', 'lemma/syzeo/index.html']);
-  assert.deepEqual(audit.unexpected, []);
-  assert.deepEqual(audit.restore, []);
-  assert.equal(audit.other.length, 2);
+  const audit = auditDataDeletions(['_astro/global.old.css', 'lemma/syzeo/index.html'], new Set(['_astro/global.old.css', 'lemma/syzeo/index.html']));
+  assert.deepEqual(audit, { restore: [], delete: [] });
+});
+
+test('parseDataPrefixes accepts prefixes under data/ and rejects anything else', () => {
+  assert.deepEqual(parseDataPrefixes('data/APo, data/Meta/quotations.json/'), ['data/APo', 'data/Meta/quotations.json']);
+  assert.deepEqual(parseDataPrefixes('data'), ['data']);
+  assert.throws(() => parseDataPrefixes('reports'), /must be data or lie under data\//);
+  assert.throws(() => parseDataPrefixes('database/x'), /must be data or lie under data\//);
+  assert.throws(() => parseDataPrefixes(''), /at least one prefix/);
 });
 
 // -- leak scan ---------------------------------------------------------------
@@ -241,6 +270,9 @@ test('parseNameStatus reads git diff --cached --name-status', () => {
 
 test('parseArgs accepts the documented flags and rejects anything else', () => {
   const o = parseArgs(['--dry-run', '--remote=git@github.com:x/y.git', '--dist=/tmp/site', '--allow-data-deletions', '--verify']);
-  assert.deepEqual(o, { dryRun: true, remote: 'git@github.com:x/y.git', dist: '/tmp/site', allowDataDeletions: true, verify: true, skipLinkCheck: false, help: false });
+  assert.deepEqual(o, { dryRun: true, remote: 'git@github.com:x/y.git', dist: '/tmp/site', allowDataDeletions: ['data'], verify: true, skipLinkCheck: false, help: false });
+  assert.deepEqual(parseArgs([]).allowDataDeletions, []);
+  assert.deepEqual(parseArgs(['--allow-data-deletions=data/APo,data/reports']).allowDataDeletions, ['data/APo', 'data/reports']);
+  assert.throws(() => parseArgs(['--allow-data-deletions=lemma']), /must be data or lie under data\//);
   assert.throws(() => parseArgs(['--force']), /Unknown option: --force/);
 });

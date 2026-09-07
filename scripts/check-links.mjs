@@ -177,7 +177,7 @@ export async function checkDist(dist) {
     }
   }
 
-  async function checkReference(source, raw, kind, { nearestLineOk = false, requireBase = false } = {}) {
+  async function checkReference(source, raw, kind, { nearestLineOk = false } = {}) {
     const href = decodeEntities(raw.trim());
     if (!href || href.startsWith('#')) {
       if (href.startsWith('#') && href.length > 1) {
@@ -189,7 +189,9 @@ export async function checkDist(dist) {
     }
     if (isExternal(href) || (kind !== 'a' && /^data:/i.test(href))) return;
     links++;
-    await checkTarget(source, raw, href, { nearestLineOk, requireBase });
+    // Emitted HTML always needs the site base; only the LSJ shard pass below,
+    // which calls checkTarget directly, is exempt.
+    await checkTarget(source, raw, href, { nearestLineOk, requireBase: true });
   }
 
   for await (const source of htmlFiles(dist)) {
@@ -204,7 +206,7 @@ export async function checkDist(dist) {
       // LSJ citation anchors get the reader's nearest-line contract (see
       // checkTarget); every other link keeps the strict exact-line check.
       const nearestLineOk = kind === 'a' && /\bclass="[^"]*\blsj-bibl\b/.test(tagMatch[0]);
-      if (attr) await checkReference(source, attr[1] ?? attr[2] ?? attr[3], kind, { nearestLineOk, requireBase: true });
+      if (attr) await checkReference(source, attr[1] ?? attr[2] ?? attr[3], kind, { nearestLineOk });
     }
   }
 
