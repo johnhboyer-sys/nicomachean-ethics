@@ -165,7 +165,10 @@ export function greekFold(input: string): string {
     const b = GREEK_BETA[lower];
     if (b) out.push(b);                          // Unicode Greek → fold letter
     else if (lower >= 'a' && lower <= 'z') out.push(lower); // Beta Code Latin input
-    else if (ch === "'") out.push("'");
+    // Elision: the index keys δ' as d'. The page prints the mark as U+2019
+    // (δ’), so a word copied from the text must fold to the same key as one
+    // typed with a straight apostrophe.
+    else if (ch === "'" || ch === '\u2019' || ch === '\u02bc') out.push("'");
     // skip combining marks, punctuation, Beta Code diacritics ) ( / \ = | +,
     // asterisk (handled by caller), and sigma-variant digits
   }
@@ -307,7 +310,14 @@ function phraseStarts(idx: GrkIndex, terms: string[][]): Map<number, number[]> {
 // A typed straight apostrophe matches the text's curly one.
 export function engPhraseMatches(text: string, terms: string[]): boolean {
   if (terms.length === 0) return true;
-  const lower = text.toLowerCase().replace(/[\u2019\u02bc]/g, "'");
+  // A word wrapped in single quotes — ‘change’ — closes with the same U+2019
+  // that Aristotle’s elides with, so after the fold the quote marks are
+  // apostrophes glued to the word; the index (stage6 english_words) strips
+  // them at a word's edge, and so must the boundary here. The opening ‘ goes
+  // the same way so that the quoted word still follows its neighbour.
+  const lower = text.toLowerCase()
+    .replace(/[\u2018\u2019\u02bc]/g, "'")
+    .replace(/(^|[^a-z'])'+|'+(?=[^a-z']|$)/g, '$1');
   // Keep the wildcards. Folding them away here would leave `hap* virtue` looking
   // for the literal string "hap virtue", so the postings would find the phrase
   // and this check would then throw it away. A leading * asks for any start

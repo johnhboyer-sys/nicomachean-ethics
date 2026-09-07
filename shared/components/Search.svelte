@@ -1194,7 +1194,7 @@
               Every occurrence of one dictionary word, in all its forms. Pick the
               headword rather than typing a spelling, so you get the word you
               meant and not the ones that merely look like it.
-              <a class="guide-link" href={`${BASE_URL}/advanced#endings`} target="_blank" rel="noreferrer">What is this?</a>
+              <a class="guide-link" href={`${BASE_URL}/advanced#lemma`} target="_blank" rel="noreferrer">What is this?</a>
               Picking more than one asks for any of them.
               This searches on its own — it ignores the Greek box above.
             </p>

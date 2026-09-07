@@ -40,6 +40,8 @@ describe('greekFold', () => {
     ['*a)nqrwpos', 'anqrwpos'],
     ["ἀρετή'", "areth'"],
     ['ψυχή κόσμος', 'yuxhkosmos'],
+    ['δ’', "d'"],           // the page's elision mark, U+2019
+    ["δ'", "d'"],
   ])('folds %s', (input, expected) => {
     expect(greekFold(input)).toBe(expected);
   });
@@ -353,6 +355,8 @@ describe('engPhraseMatches', () => {
     ['go?d', 'the good life', true],
     ['go?d', 'the gold life', true],
     ['go?d', 'the god life', false],
+    ['first change', 'the first ‘change’ is', true],   // quote marks are not part of the word
+    ["aristotle's", "‘aristotle’s’ view", true],
   ])('%s in %j → %s', (phrase, text, expected) => {
     expect(engPhraseMatches(text, phrase.split(' '))).toBe(expected);
   });
