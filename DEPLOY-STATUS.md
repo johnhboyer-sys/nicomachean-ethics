@@ -3,6 +3,12 @@
 Live site: https://johnhboyer-sys.github.io/aristotle-reader/ (custom domain aristotle.lyceum.institute pending — DNS/cert not yet live, do not link it).
 Deploy recipe: build `app/dist` (`PUBLIC_SHOW_PRIVATE=0 npm run build`, Node 22), then commit incrementally onto a fresh `gh-pages` clone (rsync + commit + push) — never `rm -rf .git && git init` at this size, it times out.
 
+**The recipe is now `npm run deploy` (`scripts/deploy-gh-pages.mjs`); rehearse with `npm run deploy:dry`.**
+It refuses a missing dist or a `dist/bonitz`, runs the link gate, shallow-clones `gh-pages`, reports rsync's deletions BY CATEGORY, restores the live-only paths in its `RESTORE_PATHS` constant, and refuses any other deletion under `data/` without `--allow-data-deletions`.
+The leak check runs in Node (no shell glob) with the "Aristotle" positive control; it commits naming the source commit, pushes, and prints the live URLs to verify (`--verify` polls them).
+Flags: `--dry-run --remote=<url> --dist=<path> --allow-data-deletions --verify --skip-link-check`. A new live-only file goes into `RESTORE_PATHS`, a new benign leak hit into `KNOWN_BENIGN` — both at the top of the script, with the reason.
+`npm run test:scripts` covers its pure functions.
+
 The env var is `PUBLIC_SHOW_PRIVATE` (unset or `0` = private translations hidden); `PUBLIC_HIDE_PRIVATE` is a stale name that appears in older entries below and sets nothing. `app/src/pages/bonitz.astro` was removed on 2026-09-03, so the build no longer emits `app/dist/bonitz` or `_astro/bonitz.*.css`; entries below that say "bonitz.astro moved aside" describe the old ritual. `/bonitz/` stays a 404 on live and the post-deploy check still asserts it.
 
 **Before committing an app-only deploy, restore every live file the local `build/dist` does not have.** `rsync --delete` stages them for deletion and the count alone will not tell you: read the deletions BY CATEGORY. Two are known — `data/reports` (76 of 88 files, pipeline output, untracked, caught 2026-08-19) and `data/Meta/quotations.json` (generated in the quirky-sanderson worktree on 2026-08-22 and never landed in the main checkout, caught 2026-08-30). Both are restored with `git checkout HEAD -- <path>` inside the gh-pages clone. Expect a third: anything a past deploy built in a worktree lives only on the live site.
