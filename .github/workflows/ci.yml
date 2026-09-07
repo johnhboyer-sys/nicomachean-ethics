@@ -37,6 +37,24 @@ jobs:
       - name: Verify @shared imports resolve
         run: node scripts/verify-shared-imports.mjs
 
+  scripts:
+    name: scripts
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # The repo-level scripts are dependency-free (node: imports only), so
+      # there is nothing to install. They gate the deploy and the link check,
+      # which is exactly why their own tests should not be the untested part.
+      - name: Run script tests
+        run: npm run test:scripts
+
   shared:
     name: shared
     runs-on: ubuntu-latest
@@ -85,19 +103,11 @@ jobs:
             tests/fixtures/preflight/valid/data \
             tests/fixtures/preflight/valid/manifests
 
+      # Exit 5 (nothing collected) used to be tolerated here because the
+      # pipeline had no tests; it has 301, so a run that collects none is a
+      # broken gate, not an empty one.
       - name: Run pipeline tests
-        run: |
-          cd pipeline
-          set +e
-          uv run --with pytest pytest
-          code=$?
-          set -e
-          # pytest exits 5 when no tests are collected; pipeline tests have not
-          # landed yet, so tolerate only that documented no-tests status here.
-          if [ "$code" -ne 0 ] && [ "$code" -ne 5 ]; then
-            exit "$code"
-          fi
-
+        run: cd pipeline && uv run --with pytest pytest
 
   workbench:
     name: workbench
@@ -121,6 +131,12 @@ jobs:
 
       - name: Run tests
         run: cd workbench && npm test
+
+      # A green suite does not mean the app starts: a prop added to a
+      # component's type but not to its destructuring threw at render with
+      # every test passing (workbench/SESSION-HANDOFF.md).
+      - name: Typecheck
+        run: cd workbench && npx tsc --noEmit
 
   desktop:
     name: desktop
