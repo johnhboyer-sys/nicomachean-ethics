@@ -77,6 +77,24 @@ shared with other checkouts and can hold a different revision).
    a true first-run empty state.
 3. **Parked on John's taste**: heading style — big titles vs small labels; and
    drag-a-chapter-into-a-Book (he chose "skip for now" once already).
+0. **Read first — a data-loss class found and fixed 2026-09-07, untested in
+   the .app** (`claude/weekly-usage-catchup-h8go43`): the first autosave of a
+   source import (scheme `source-ref`) never wrote `rowRefs`, so on reopen
+   every row hydrated as `1, 2, 3…` and the source's citations, the outline's
+   chapter divisions and the export's reference stamps were gone after one
+   keystroke. This is the likely root of the "imported works get no outline"
+   thread. Also fixed: an export rebase that dropped heading overrides and
+   reference stamps; a work id that is all digits (`1984`) or a YAML word
+   written unquoted, so the file could not open; a footnote body line that
+   looks like a new entry; a UTF-8 BOM read as "missing frontmatter"; a
+   pasted CR in `[ENGLISH.PARA]` breaking the row count; and an autosave
+   flush racing the write loop so the last edit was never written. 30 new
+   tests (1,829 green). Still open, reported not fixed: `TauriStorage.write`
+   is truncate-and-write, not write-then-rename (needs `fs:allow-rename`),
+   and `ChapterEditor.svelte`'s `reassignDocumentAddresses` overwrites a
+   source-ref work's addresses with ordinals on any split or merge.
+   Re-import Physics from the disc, type one character, quit, reopen: the
+   outline must still show eight books.
 4. **Built 2026-09-07, untested in the .app**: the Add work… dialog's dead end.
    When every corpus work is already in the library it now says so in one
    sentence and offers "Import a text…" (the rail's own opener, passed in by

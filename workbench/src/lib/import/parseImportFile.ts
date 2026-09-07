@@ -92,7 +92,10 @@ const SECTION_HEADERS = ['[GREEK]', '[ENGLISH]'] as const;
 type SectionHeader = (typeof SECTION_HEADERS)[number];
 
 function normalizeLineEndings(raw: string): string {
-  return raw.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  // A byte-order mark (some Windows editors write one) is not content and
+  // must not read as "the file has no header".
+  const text = raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw;
+  return text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
 }
 
 function fail(kind: ImportParseFailureKind, message: string, detail: string): ImportParseFailure {

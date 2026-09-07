@@ -199,9 +199,43 @@ export function columnStartsFromModel(model: ChapterModel, spans: ChapterSpans =
   return starts;
 }
 
+/**
+ * The rows' own addresses, for a document-spine model whose addresses are NOT
+ * its ordinals — a source import, whose rows carry the source's citations
+ * ("184a.10", "205a.25,29", "1.327a"). Nothing can re-derive those: a save that
+ * dropped them turned the Physics into lines 1…5520 on the next open, and with
+ * them went the outline's chapter divisions and the export's reference stamps.
+ * Undefined when every address is the ordinal (paragraph / plain-line
+ * documents, or an import whose source numbered its lines 1, 2, 3 — those
+ * files stay exactly as they were) or when any row has no usable address.
+ */
+function sourceRowRefs(model: ChapterModel, scheme: CitationScheme): string[] | undefined {
+  if (scheme.spineSource !== 'document' || model.rows.length === 0) return undefined;
+  let ordinal = true;
+  const refs: string[] = [];
+  for (let i = 0; i < model.rows.length; i++) {
+    const raw = model.rows[i].address.raw;
+    if (raw === '') return undefined;
+    try {
+      scheme.parseAddress(raw);
+    } catch {
+      return undefined;
+    }
+    if (ordinal && raw !== documentOrdinalAddress(scheme, i + 1).raw) ordinal = false;
+    refs.push(raw);
+  }
+  return ordinal ? undefined : refs;
+}
+
 export function chapterFileFromModel(model: ChapterModel, spans: ChapterSpans = spansFromModel(model)): ChapterFile {
   const scheme = getScheme(model.scheme);
-  const effectiveSpans = scheme.spineSource === 'document' ? spansFromModel(model) : spans;
+  const rowRefs = sourceRowRefs(model, scheme);
+  const effectiveSpans =
+    rowRefs !== undefined
+      ? { start: rowRefs[0], end: rowRefs[rowRefs.length - 1] }
+      : scheme.spineSource === 'document'
+        ? spansFromModel(model)
+        : spans;
   const footnotes = [...model.footnotes]
     .map((fn) => {
       const id = Number(fn.id);
@@ -227,7 +261,15 @@ export function chapterFileFromModel(model: ChapterModel, spans: ChapterSpans = 
   for (let i = 0; i < model.rows.length; i++) {
     const row = model.rows[i];
     if (!row.splitOffsets || row.splitOffsets.length === 0) continue;
-    const ref = scheme.spineSource === 'document' ? documentOrdinalAddress(scheme, i + 1).raw : row.address.raw;
+    // A split's ref must be the label hydration will give the row: its own
+    // address when the file carries row_refs, the ordinal for the other
+    // document spines, the row address for a corpus spine.
+    const ref =
+      rowRefs !== undefined
+        ? rowRefs[i]
+        : scheme.spineSource === 'document'
+          ? documentOrdinalAddress(scheme, i + 1).raw
+          : row.address.raw;
     if (ref === '') continue;
     for (const offset of row.splitOffsets) {
       lineSplits.push({ ref, offset });
@@ -275,6 +317,7 @@ export function chapterFileFromModel(model: ChapterModel, spans: ChapterSpans = 
       // Key order and present/absent-ness must match parseChapterFile's meta
       // construction — the round-trip self-check compares JSON shapes.
       ...(columnStarts ? { columnStarts } : {}),
+      ...(rowRefs !== undefined ? { rowRefs } : {}),
       ...(lineSplits.length > 0 ? { lineSplits } : {}),
       // paragraph_starts rides along verbatim (D8 §5 grouping metadata —
       // dropping it on the first autosave would silently lose the import's
@@ -644,6 +687,11 @@ export function createAutosave(config: AutosaveConfig): AutosaveHandle {
   let timer: ReturnType<typeof setTimeout> | null = null;
   let state: SaveState = 'idle';
   let writing: Promise<void> | null = null;
+  // True from the loop's first line to its last, synchronously: `writing` is
+  // still set for one microtask after the loop has finished, and an edit +
+  // flush landing in that instant must start a new loop, not wait on a
+  // finished one and leave the edit unsaved with nothing scheduled.
+  let looping = false;
 
   function setState(next: SaveState) {
     if (state === next) return;
@@ -659,41 +707,46 @@ export function createAutosave(config: AutosaveConfig): AutosaveHandle {
   }
 
   async function writeLoop(): Promise<void> {
-    // Loop: if markDirty lands while a write is in flight, write again so the
-    // final file always reflects the final model state.
-    while (dirty) {
-      dirty = false;
-      let content: string;
-      try {
-        content = config.snapshot();
-      } catch (err) {
-        // Serialization failure: keep the dirty flag so nothing is dropped,
-        // surface the error state, and leave the last good file untouched.
-        dirty = true;
-        setState('error');
-        console.error(`autosave: snapshot failed for ${key}`, err);
-        return;
+    looping = true;
+    try {
+      // Loop: if markDirty lands while a write is in flight, write again so the
+      // final file always reflects the final model state.
+      while (dirty) {
+        dirty = false;
+        let content: string;
+        try {
+          content = config.snapshot();
+        } catch (err) {
+          // Serialization failure: keep the dirty flag so nothing is dropped,
+          // surface the error state, and leave the last good file untouched.
+          dirty = true;
+          setState('error');
+          console.error(`autosave: snapshot failed for ${key}`, err);
+          return;
+        }
+        setState('saving');
+        try {
+          await storage.write(config.workId, config.fileName, content);
+        } catch (err) {
+          dirty = true;
+          setState('error');
+          console.error(`autosave: write failed for ${key}`, err);
+          return;
+        }
+        if (!dirty) {
+          setState('saved');
+          config.onSaved?.();
+        }
       }
-      setState('saving');
-      try {
-        await storage.write(config.workId, config.fileName, content);
-      } catch (err) {
-        dirty = true;
-        setState('error');
-        console.error(`autosave: write failed for ${key}`, err);
-        return;
-      }
-      if (!dirty) {
-        setState('saved');
-        config.onSaved?.();
-      }
+    } finally {
+      looping = false;
     }
   }
 
   function startWrite(): Promise<void> {
-    if (writing) return writing;
+    if (writing && looping) return writing;
     const run = writeLoop().finally(() => {
-      writing = null;
+      if (writing === registered) writing = null;
       if (pendingWrites.get(key) === registered) pendingWrites.delete(key);
     });
     writing = run;

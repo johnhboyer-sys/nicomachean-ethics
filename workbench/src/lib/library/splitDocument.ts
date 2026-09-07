@@ -128,13 +128,28 @@ function rebase(file: ChapterFile, scheme: CitationScheme, seg: Segment): Chapte
     ?.filter((p) => p >= start + 1 && p <= end)
     .map((p) => p - start);
 
+  // A source import's rows carry the source's own citations; a part keeps its
+  // slice of them, and its spans and split refs are those addresses rather
+  // than re-based ordinals (they are what hydration labels the rows with).
+  const rowRefs = file.meta.rowRefs?.slice(start, end);
+  const refRow = (ref: string): number | null => {
+    if (!file.meta.rowRefs) return null;
+    const at = file.meta.rowRefs.indexOf(ref);
+    return at >= 0 ? at + 1 : null;
+  };
+
   const lineSplits = file.meta.lineSplits
     ?.map((ls) => {
-      const g = ordinalOf(ls.ref);
+      const g = rowRefs ? refRow(ls.ref) : ordinalOf(ls.ref);
       if (g === null || g < start + 1 || g > end) return null;
-      return { ref: documentOrdinalAddress(scheme, g - start).raw, offset: ls.offset };
+      return { ref: rowRefs ? ls.ref : documentOrdinalAddress(scheme, g - start).raw, offset: ls.offset };
     })
     .filter((x): x is { ref: string; offset: number } => x !== null);
+
+  // Heading title overrides are per row like the other sections; dropping
+  // them printed the translation where the rail shows "Objection 2".
+  const titleSlice = file.headingTitleLines?.slice(start, end);
+  const headingTitleLines = titleSlice?.some((t) => t.length > 0) ? titleSlice : undefined;
 
   const ids = markerIdsInLines(englishLines);
   const footnotes: Footnote[] = file.footnotes.filter((f) => ids.has(f.id));
@@ -145,10 +160,11 @@ function rebase(file: ChapterFile, scheme: CitationScheme, seg: Segment): Chapte
     book,
     chapter,
     citationScheme: file.meta.citationScheme,
-    spanStart: n > 0 ? documentOrdinalAddress(scheme, 1).raw : '',
-    spanEnd: n > 0 ? documentOrdinalAddress(scheme, n).raw : '',
+    spanStart: n > 0 ? (rowRefs ? rowRefs[0] : documentOrdinalAddress(scheme, 1).raw) : '',
+    spanEnd: n > 0 ? (rowRefs ? rowRefs[n - 1] : documentOrdinalAddress(scheme, n).raw) : '',
     // document works carry no column_starts; key order below mirrors
     // parseChapterFile's meta construction (round-trip self-check compares JSON).
+    ...(rowRefs && rowRefs.length > 0 ? { rowRefs } : {}),
     ...(lineSplits && lineSplits.length > 0 ? { lineSplits } : {}),
     ...(paragraphStarts && paragraphStarts.length > 0 ? { paragraphStarts } : {}),
     ...(headers.length > 0 ? { headers } : {}),
@@ -159,6 +175,7 @@ function rebase(file: ChapterFile, scheme: CitationScheme, seg: Segment): Chapte
     greekLines,
     englishLines,
     ...(englishParaLines ? { englishParaLines } : {}),
+    ...(headingTitleLines ? { headingTitleLines } : {}),
     footnotes,
   };
 }
