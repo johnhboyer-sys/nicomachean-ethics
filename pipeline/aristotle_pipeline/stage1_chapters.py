@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from bisect import bisect_left
 from pathlib import Path
 
 from lxml import etree
@@ -61,20 +62,47 @@ def _local(el) -> str:
     return etree.QName(el).localname if isinstance(el.tag, str) else ""
 
 
-def _first_word_at(owner, column: str, line) -> int | None:
+def _first_word_at(owner, column: str, line, start: int = 0) -> int | None:
     """Index in the spine word stream of the first word at (column, >= line) —
     used to pin a chapter at an authoritative Bekker milestone when text
-    alignment misses. `line` may be coarse (the last cadence line milestone)."""
+    alignment misses. `line` may be coarse (the last cadence line milestone).
+
+    `start` is the monotonic cursor: the search begins there, so a milestone
+    pointing back up the column cannot file a chapter ABOVE the previous one
+    (which _chapter_segments would then resolve by handing the two chapters
+    each other's prose). No hit at or after the cursor is reported as
+    unresolved — the caller surfaces that as a gap — rather than silently
+    regressing. The page-only fallback below has always worked this way.
+    """
     if column is None or line is None:
         return None
     try:
         ln = int(line)
     except (TypeError, ValueError):
         return None
-    for i, (col, lno, _wi) in enumerate(owner):
+    for i in range(max(0, start), len(owner)):
+        col, lno, _wi = owner[i]
         if col == column and lno >= ln:
             return i
     return None
+
+
+def _find_word_run(joined: str, needle: str, after: int) -> int:
+    """First occurrence of `needle` in `joined` at or after `after` that starts
+    on a WORD boundary, or -1.
+
+    `joined` is the spine flattened to a single space-joined word stream, so a
+    bare str.find can land INSIDE a word: a chapter opening `alpha beta gamma
+    delta` matches the tail of an earlier `xalpha beta gamma delta`, and the
+    chapter is then filed on that line — and marked wordAnchor — without ever
+    having matched a word. Only the left edge is checked: the right edge must
+    stay loose, because the TEI's last window word is often a prefix of the
+    spine's (orthographic divergence is exactly what these windows absorb).
+    """
+    p = joined.find(needle, after)
+    while p > 0 and joined[p - 1] != " ":
+        p = joined.find(needle, p + 1)
+    return p
 
 
 def _div_opening(div, k_chars=400) -> str:
@@ -290,7 +318,7 @@ def extract_chapters_grc(spine: dict, grc_rel: str,
             for kk in (8, 6, 5, 4):
                 if len(ow) < kk:
                     continue
-                p = joined.find(" ".join(ow[:kk]), after)
+                p = _find_word_run(joined, " ".join(ow[:kk]), after)
                 if p >= 0:
                     widx = joined[:p].count(" ")
                     after = wstart[widx]
@@ -301,7 +329,8 @@ def extract_chapters_grc(spine: dict, grc_rel: str,
                 # Orthographic divergence missed the text match; fall back to the
                 # milestone's own Bekker position (heading pinned at line start).
                 # This is authoritative but not a word-matched anchor.
-                widx = _first_word_at(owner, mcol, mline)
+                widx = _first_word_at(owner, mcol, mline,
+                                      bisect_left(wstart, after))
                 # Some First1KGreek chapter divs begin immediately after a page
                 # milestone, before their first line milestone.  The page is
                 # still authoritative; retain the division at the first word in
@@ -331,7 +360,8 @@ def extract_chapters_grc(spine: dict, grc_rel: str,
                     for start in (0, 1, 2, 3):
                         if len(ow) < start + kk:
                             continue
-                        p = joined.find(" ".join(ow[start:start + kk]), after)
+                        p = _find_word_run(
+                            joined, " ".join(ow[start:start + kk]), after)
                         if p >= 0:
                             w = joined[:p].count(" ")
                             widx = max(0, w - start)
