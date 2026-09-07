@@ -72,3 +72,25 @@ class TestLemmaReadings:
         stream = [["a"], ["b", "c"]]
         found = grams(stream, [0], 2, n=2)
         assert found["a b"] == [0] and found["a c"] == [0]
+
+
+class TestEnglishStream:
+    def test_tokenizes_the_translation_the_way_stage6_indexes_it(self, tmp_path, monkeypatch):
+        """english-segments.json offsets count words; stage6's english.json
+        keys them. Both must split the same text into the same words — the
+        archive translations print possessives with U+2019, which the old
+        [a-z']+ scan broke into "aristotle" + "s"."""
+        import json
+        from aristotle_pipeline import stage8_ngrams
+
+        work = tmp_path / "build" / "dist" / "TST"
+        work.mkdir(parents=True)
+        (work / "book-01.json").write_text(json.dumps({"book": 1, "segments": [
+            {"id": "1:244b", "column": "244b",
+             "english": {"text": "Aristotle’s first ‘change’ isn’t the last."}},
+        ]}), encoding="utf-8")
+        monkeypatch.setattr(stage8_ngrams, "BUILD_DIR", tmp_path / "build")
+        stream, bounds, segments = stage8_ngrams._english_stream("TST")
+        assert stream == [["aristotle's"], ["first"], ["change"], ["isn't"], ["the"], ["last"]]
+        assert bounds == [0]
+        assert segments == [{"book": 1, "column": "244b", "base": 0, "words": 6}]

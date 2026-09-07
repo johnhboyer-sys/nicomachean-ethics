@@ -89,3 +89,30 @@ def test_preflight_counts_a_chapter_title_as_a_citation(tmp_path):
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_preflight_rejects_data_emitted_from_a_different_manifest(tmp_path):
+    """Meta-public.yaml and Pol-public.yaml swap the PRIMARY translation
+    (Tredennick/Rackham → Ross/Jowett). The public-gating check only compares
+    the secondary/third/overlay slots, so a data dir built from the private
+    manifest — Loeb prose in every book and in the search index — used to pass
+    preflight against the public one. The emitted manifest.json names the
+    translation it was built with; it has to be the one the selected manifest
+    names."""
+    import json
+    import shutil
+
+    case = tmp_path / "case"
+    shutil.copytree(FIXTURES / "valid", case)
+    emitted = case / "data" / "VAL" / "manifest.json"
+    doc = json.loads(emitted.read_text(encoding="utf-8"))
+    doc["work"]["english_translation"] = "Hugh Tredennick (Loeb, 1933)"
+    emitted.write_text(json.dumps(doc), encoding="utf-8")
+    result = subprocess.run(
+        [sys.executable, "-m", "aristotle_pipeline.preflight",
+         str(case / "data"), str(case / "manifests")],
+        cwd=ROOT / "pipeline", text=True, capture_output=True, check=False,
+    )
+    assert result.returncode != 0
+    assert "emitted from a different manifest" in result.stdout
+    assert "Hugh Tredennick (Loeb, 1933)" in result.stdout
