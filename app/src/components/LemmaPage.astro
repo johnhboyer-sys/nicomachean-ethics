@@ -161,7 +161,9 @@ const breadcrumb = Astro.site ? {
     }
     .fb-item > summary::-webkit-details-marker { display: none; }
     .fb-item > summary:hover { background: var(--surface-2, rgba(128,128,128,.08)); }
-    .fb-name { font-size: 0.9rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    /* The name may wrap; it must never be cut to "De Generatione et…" — the
+       row is a grid, so a two-line title just makes its row taller. */
+    .fb-name { font-size: 0.9rem; min-width: 0; overflow-wrap: anywhere; }
     .fb-item > summary:hover .fb-name { color: var(--accent); }
     .fb-track { height: 0.7rem; background: var(--border); border-radius: 4px; overflow: hidden; }
     .fb-fill { display: block; height: 100%; background: var(--accent); border-radius: 4px; }

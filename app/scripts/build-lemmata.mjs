@@ -90,6 +90,17 @@ const works = readdirSync(DATA, { withFileTypes: true })
   .filter((w) => existsSync(join(DATA, w, 'analyses.json')))
   .filter((w) => workAuthor(w) === 'Aristotle');
 
+// Refuse before touching any output. With no qualifying work the walk below
+// is empty, and the old behaviour was to wipe public/data/lemmata/, write an
+// empty lemmata.json + _index.json + picker shards, and only then crash on
+// the report line with "Cannot read properties of undefined (reading
+// 'count')" — a confusing failure that had already destroyed the previous
+// run's lemma pages.
+if (works.length === 0) {
+  console.error(`build-lemmata: no Aristotle work with analyses.json under ${DATA} — refusing to write.`);
+  process.exit(1);
+}
+
 // Titles + a stable display order from each work's manifest.
 const title = {};
 for (const w of works) {

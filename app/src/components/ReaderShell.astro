@@ -278,7 +278,12 @@ const intro =
   </header>
 
   <div class="toc-backdrop" id="toc-backdrop" hidden></div>
-  <aside class="toc-sidebar" id="toc-sidebar" aria-label={`${work.title} — table of contents`} aria-hidden="true">
+  <!-- Closed, the drawer is translated off-screen and aria-hidden, but its
+       links and inputs would still be tab stops: a keyboard user tabbing from
+       the header vanished into ~50 invisible links before reaching the text.
+       `inert` removes it from focus and hit-testing while closed; setToc()
+       below toggles it with aria-hidden. -->
+  <aside class="toc-sidebar" id="toc-sidebar" aria-label={`${work.title} — table of contents`} aria-hidden="true" inert>
     <div class="toc-head">
       <a class="toc-home" href={`${base}/`}>‹ All works</a>
       <button type="button" class="toc-close" aria-label="Close contents">×</button>
@@ -371,6 +376,7 @@ const intro =
     const setToc = (open: boolean) => {
       document.body.classList.toggle('toc-open', open);
       sidebar?.setAttribute('aria-hidden', String(!open));
+      if (sidebar) sidebar.inert = !open;
       tocToggle?.setAttribute('aria-expanded', String(open));
       if (backdrop) backdrop.hidden = !open;
     };

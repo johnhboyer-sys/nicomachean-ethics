@@ -2,8 +2,9 @@
 // Dependency-free link checker for the emitted Astro site (Node 22+).
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const BASE = '/aristotle-reader';
+export const BASE = '/aristotle-reader';
 const MAX_ID_CACHE = 6000;
 const MAX_REPORTS = 200;
 
@@ -78,12 +79,10 @@ function virtualDirectory(dist, source) {
   return path.dirname(relative) === '.' ? '' : path.dirname(relative);
 }
 
-async function main() {
-  const dist = getDist();
-  let stat;
-  try { stat = await fs.stat(dist); } catch { usage(`Dist directory does not exist: ${dist}`); }
-  if (!stat.isDirectory()) usage(`Dist path is not a directory: ${dist}`);
-
+// Crawl a built site and return the tallies plus every broken reference.
+// Pure with respect to the process: no argv, no exit — main() owns those, so
+// the gate's decisions can be tested against a fixture dist.
+export async function checkDist(dist) {
   let pages = 0;
   let links = 0;
   let anchors = 0;
@@ -130,8 +129,21 @@ async function main() {
     return null;
   }
 
-  async function checkTarget(source, raw, href, { nearestLineOk = false } = {}) {
+  async function checkTarget(source, raw, href, { nearestLineOk = false, requireBase = false } = {}) {
     const parts = splitReference(href);
+    // The site is served under BASE on GitHub Pages, so a root-relative href
+    // in emitted HTML that lacks the prefix (`/search`, `/EN/book/1`) is a
+    // 404 on live even though it resolves happily against dist/ as root.
+    // LSJ shard HTML is exempt: the pipeline cannot know the base, so shards
+    // carry base-less paths and every renderer prefixes them at render time
+    // (docs/spec-lsj-citations.md, decision 5).
+    if (requireBase && parts.pathname.startsWith('/')) {
+      const rooted = decodePath(parts.pathname);
+      if (rooted !== BASE && !rooted.startsWith(`${BASE}/`)) {
+        report(source, raw, `root-relative link lacks the site base ${BASE}`);
+        return;
+      }
+    }
     const target = await resolve(source, parts.pathname);
     if (!target) {
       report(source, raw, 'target does not exist');
@@ -165,7 +177,7 @@ async function main() {
     }
   }
 
-  async function checkReference(source, raw, kind, { nearestLineOk = false } = {}) {
+  async function checkReference(source, raw, kind, { nearestLineOk = false, requireBase = false } = {}) {
     const href = decodeEntities(raw.trim());
     if (!href || href.startsWith('#')) {
       if (href.startsWith('#') && href.length > 1) {
@@ -177,7 +189,7 @@ async function main() {
     }
     if (isExternal(href) || (kind !== 'a' && /^data:/i.test(href))) return;
     links++;
-    await checkTarget(source, raw, href, { nearestLineOk });
+    await checkTarget(source, raw, href, { nearestLineOk, requireBase });
   }
 
   for await (const source of htmlFiles(dist)) {
@@ -192,7 +204,7 @@ async function main() {
       // LSJ citation anchors get the reader's nearest-line contract (see
       // checkTarget); every other link keeps the strict exact-line check.
       const nearestLineOk = kind === 'a' && /\bclass="[^"]*\blsj-bibl\b/.test(tagMatch[0]);
-      if (attr) await checkReference(source, attr[1] ?? attr[2] ?? attr[3], kind, { nearestLineOk });
+      if (attr) await checkReference(source, attr[1] ?? attr[2] ?? attr[3], kind, { nearestLineOk, requireBase: true });
     }
   }
 
@@ -296,6 +308,17 @@ async function main() {
     });
   }
 
+  return { pages, links, anchors, broken };
+}
+
+async function main() {
+  const dist = getDist();
+  let stat;
+  try { stat = await fs.stat(dist); } catch { usage(`Dist directory does not exist: ${dist}`); }
+  if (!stat.isDirectory()) usage(`Dist path is not a directory: ${dist}`);
+
+  const { pages, links, anchors, broken } = await checkDist(dist);
+
   // A dist with no pages (or no homepage) is a failed build, not a clean one —
   // this gate must never bless an empty directory.
   if (pages === 0) usage(`No HTML pages found under ${dist} — not a built site.`);
@@ -309,7 +332,9 @@ async function main() {
   process.exitCode = broken.length ? 1 : 0;
 }
 
-main().catch(error => {
-  console.error(`Link checker failed: ${error.stack || error}`);
-  process.exit(2);
-});
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  main().catch(error => {
+    console.error(`Link checker failed: ${error.stack || error}`);
+    process.exit(2);
+  });
+}
