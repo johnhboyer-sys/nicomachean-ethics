@@ -1468,7 +1468,11 @@
                     <!-- The siglum sits in the margin at the gutter's edge; when the
                          line also carries a Bekker number, it slides left of it —
                          the number never yields its slot. -->
-                    {#if !item.line.cont && quoteStarts.has(`${seg.column}:${item.line.n}`)}
+                    <!-- A quotation's `lo` is a bare line number, so it belongs
+                         to the unlettered line: without the `sub` guard a
+                         quotation starting at 244b5 drew its sigla twice, once
+                         on 5 and again on 5a. -->
+                    {#if !item.line.cont && !item.line.sub && quoteStarts.has(`${seg.column}:${item.line.n}`)}
                       <span class="quotation-sigla" class:has-num={showLineNum(item.line.n) !== ''}>
                         {#each quoteStarts.get(`${seg.column}:${item.line.n}`) ?? [] as q}
                           <QuotationMarker quotation={q} />

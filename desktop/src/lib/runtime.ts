@@ -60,17 +60,6 @@ export function errorText(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
-/**
- * Memoise a promise-returning factory. The first call starts `make()` and
- * every later call shares that promise — except after a rejection, which is
- * evicted so the next call retries instead of replaying the failure for the
- * rest of the session. Callers still receive the original rejection.
- */
-export function lazy<T>(make: () => Promise<T>): () => Promise<T> {
-  let p: Promise<T> | null = null;
-  return () => (p ??= make().catch(e => { p = null; throw e; }));
-}
-
 type AtomicFs = Pick<typeof import('@tauri-apps/plugin-fs'), 'writeTextFile' | 'rename'>;
 
 /**

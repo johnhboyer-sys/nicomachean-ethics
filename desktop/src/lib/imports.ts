@@ -15,7 +15,8 @@
 import { fetchBook, fetchChapters, type BookData, type ChapterRef, type OverlayPiece } from '@shared/lib/data';
 import type { TranslationRef } from '@shared/lib/works';
 import { getWork } from '@shared/lib/works';
-import { isTauri, errorText, lazy, atomicWriteText } from './runtime';
+import { isTauri, errorText, atomicWriteText } from './runtime';
+import { memoAsync } from '@shared/lib/memo';
 import {
   parseTranslationFile, serializeFrontmatter, splitChapters, splitFrontmatter, slugId, composeCitation, auditChapterKeys,
   type ParsedTranslation, type TranslationMeta, type FootnoteScope,
@@ -193,8 +194,8 @@ async function tauriStore(): Promise<Store> {
 }
 
 // A failed handle (app-data dir not resolvable yet) must not be the cached
-// answer for the rest of the session — lazy() retries on the next call.
-const store = lazy<Store>(() => (isTauri() ? tauriStore() : Promise.resolve(browserStore)));
+// answer for the rest of the session — memoAsync() retries on the next call.
+const store = memoAsync<Store>(() => (isTauri() ? tauriStore() : Promise.resolve(browserStore)));
 
 // ── runtime registration ─────────────────────────────────────────────────────
 

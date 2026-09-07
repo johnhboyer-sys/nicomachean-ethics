@@ -18,7 +18,7 @@
 //   [REVIEW: "understanding" or "under-standing"?]
 // which the import dialog's review queue resolves choice by choice.
 
-import { lazy } from './runtime';
+import { memoAsync } from '@shared/lib/memo';
 
 export interface HyphenDecision {
   original: string;      // "under-\nstanding" as matched
@@ -43,10 +43,10 @@ const SITE = /([A-Za-z]+)-\r?\n([A-Za-z]+)/g;
 type Spell = { correct(word: string): boolean };
 
 // Loaded once; a failed load is not the answer for the rest of the session
-// (lazy() evicts a rejection): the dialog reads a rejection as "dictionary
+// (memoAsync() evicts a rejection): the dialog reads a rejection as "dictionary
 // unavailable" and skips hyphen review, so caching it would silently switch
 // the feature off.
-const spellChecker = lazy<Spell>(async () => {
+const spellChecker = memoAsync<Spell>(async () => {
   // The hunspell en_US data is vendored under assets (dictionary-en is a
   // Node-only package — it reads its files with fs); ?raw hands the .aff/
   // .dic contents to nspell as strings, which works in browser and Tauri

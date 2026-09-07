@@ -60,7 +60,8 @@ export const PALETTE: AnnColor[] = ['yellow', 'green', 'pink', 'blue', 'purple',
 
 // ── storage ──────────────────────────────────────────────────────────────────
 
-import { isTauri, errorText, lazy, atomicWriteText } from './runtime';
+import { isTauri, errorText, atomicWriteText } from './runtime';
+import { memoAsync } from '@shared/lib/memo';
 
 interface AnnRead {
   anns: Annotation[];
@@ -122,8 +123,8 @@ async function tauriStore(): Promise<AnnStore> {
   };
 }
 
-// A failed handle is never cached (see lazy()).
-const store = lazy<AnnStore>(() => (isTauri() ? tauriStore() : Promise.resolve(browserStore)));
+// A failed handle is never cached (see memoAsync()).
+const store = memoAsync<AnnStore>(() => (isTauri() ? tauriStore() : Promise.resolve(browserStore)));
 
 const _cache = new Map<string, AnnRead>();
 
