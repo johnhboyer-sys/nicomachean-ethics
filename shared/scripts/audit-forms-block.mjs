@@ -33,8 +33,6 @@ import { transformSync } from 'esbuild';
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = resolve(HERE, '..', '..');
 const SOURCE = 'shared/lib/html.ts';
-// Reach the internals as the handoff describes, for anyone extending this.
-const EXPORT_INTERNALS = '\nexport { plainLabel, splitOnSeparators, LABELISH };\n';
 
 function usage(code) {
   console.error('usage: node shared/scripts/audit-forms-block.mjs <git-ref> <path-to-lsj-dir>');
@@ -58,7 +56,7 @@ if (!shards.length) {
 // ── the two renderers ───────────────────────────────────────────────────────
 const work = mkdtempSync(join(tmpdir(), 'audit-forms-block-'));
 async function load(name, source) {
-  const { code } = transformSync(source + EXPORT_INTERNALS, { loader: 'ts', format: 'esm', target: 'node20' });
+  const { code } = transformSync(source, { loader: 'ts', format: 'esm', target: 'node20' });
   const file = join(work, `${name}.mjs`);
   writeFileSync(file, code);
   return import(pathToFileURL(file).href);

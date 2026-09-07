@@ -362,47 +362,82 @@ describe('engPhraseMatches', () => {
   });
 });
 
-describe('an English phrase past the 500-character head', () => {
+describe('an English phrase is an adjacency test over word positions', () => {
   // stage6 keeps only the first 500 characters of a segment's English in
-  // meta.json; the postings cover the whole segment.
+  // meta.json; the postings carry every word with its position.
   const filler = 'lorem ipsum '.repeat(60).slice(0, ENGLISH_HEAD_LIMIT);
   const longMeta = [
     { id: 'L1', book: 1, column: '1094a', greek_head: '', english_head: filler },
     { id: 'L2', book: 1, column: '1094b', greek_head: '', english_head: 'virtue and a habit' },
     { id: 'L3', book: 2, column: '1100a', greek_head: '', english_head: filler },
   ];
-  const longEnglish = { virtue: [0, 1, 2], habit: [0, 1, 2] };
+  // L1: "virtue habit" adjacent past the cut. L2: "virtue and a habit" — not
+  // adjacent. L3: "virtue and habit" past the cut — not adjacent.
+  const positional = {
+    virtue: [[0, 120], [1, 0], [2, 120]],
+    habit: [[0, 121], [1, 3], [2, 122]],
+    and: [[1, 1], [2, 121]],
+  };
+  const legacy = { virtue: [0, 1, 2], habit: [0, 1, 2], and: [1, 2] };
   let books: string[];
-
-  beforeEach(() => {
+  const mock = (english: unknown) => {
     books = [];
     vi.spyOn(globalThis, 'fetch').mockImplementation((url) => {
       const path = String(url);
       if (path.endsWith('/meta.json')) return json(longMeta);
-      if (path.endsWith('/english.json')) return json(longEnglish);
-      if (/\/book-\d+\.json$/.test(path)) {
-        books.push(path);
-        if (path.endsWith('/book-01.json')) {
-          return json({ book: 1, segments: [
-            { id: 'L1', column: '1094a', greek: [], english: { text: `${filler} and so virtue habit is the end.` } },
-            { id: 'L2', column: '1094b', greek: [], english: { text: 'virtue and a habit' } },
-          ] });
-        }
-        return json({ book: 2, segments: [
-          { id: 'L3', column: '1100a', greek: [], english: { text: `${filler} where virtue and habit part.` } },
-        ] });
-      }
+      if (path.endsWith('/english.json')) return json(english);
+      if (/\/book-\d+\.json$/.test(path)) books.push(path);
+      return Promise.resolve({ ok: false, status: 404, json: async () => ({}) } as Response);
+    });
+  };
+  afterEach(() => vi.restoreAllMocks());
+
+  it('finds the phrase past the head from the postings, fetching no book', async () => {
+    mock(positional);
+    const { results } = await search('', 'virtue habit', 'all', 'phrase', 'and', ['TPosIndex']);
+    expect(results.map((r) => r.meta.id)).toEqual(['L1']);
+    expect(books).toEqual([]);
+  });
+
+  it('on an older build without positions checks the head and fetches nothing', async () => {
+    // The phrase past the cut is missed on such a build — the older limit,
+    // kept rather than fetching every candidate's whole book.
+    mock(legacy);
+    const { results } = await search('', 'virtue habit', 'all', 'phrase', 'and', ['TLegacyIndex']);
+    expect(results).toEqual([]);
+    expect(books).toEqual([]);
+  });
+});
+
+describe('an English word typed or pasted from the page', () => {
+  const quoteMeta = [
+    { id: 'Q1', book: 1, column: '1094a', greek_head: '', english_head: 'Aristotle’s first ‘change’ isn’t the last.' },
+  ];
+  // Keyed as stage6's english_words() keys them.
+  const index = { "aristotle's": [[0, 0]], first: [[0, 1]], change: [[0, 2]], "isn't": [[0, 3]], the: [[0, 4]], last: [[0, 5]] };
+  beforeEach(() => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation((url) => {
+      const path = String(url);
+      if (path.endsWith('/meta.json')) return json(quoteMeta);
+      if (path.endsWith('/english.json')) return json(index);
       return Promise.resolve({ ok: false, status: 404, json: async () => ({}) } as Response);
     });
   });
   afterEach(() => vi.restoreAllMocks());
 
-  it('is settled by the segment text, not dropped', async () => {
-    const { results } = await search('', 'virtue habit', 'all', 'phrase', 'and', ['TLongHead']);
-    // L1: the phrase stands past the cut → kept from the book text.
-    // L2: the head is short and lacks the phrase → dropped, no book needed.
-    // L3: at the cut, and the book text lacks the phrase → dropped.
-    expect(results.map((r) => r.meta.id)).toEqual(['L1']);
-    expect(books.map((p) => p.slice(p.lastIndexOf('/') + 1)).sort()).toEqual(['book-01.json', 'book-02.json']);
+  it.each([
+    ['aristotle’s', 1],    // the page's U+2019
+    ["aristotle's", 1],
+    ['‘change’', 1],       // quote marks are not part of the word
+    ["'change'", 1],
+    ['aristotles', 0],
+  ])('%s → %i segment', async (q, n) => {
+    const { results } = await search('', q, 'all', 'all', 'and', ['TQuotes']);
+    expect(results).toHaveLength(n);
+  });
+
+  it('finds a phrase whose words the page prints with curly marks', async () => {
+    const { results } = await search('', 'first ‘change’ isn’t', 'all', 'phrase', 'and', ['TQuotesPhrase']);
+    expect(results.map((r) => r.meta.id)).toEqual(['Q1']);
   });
 });

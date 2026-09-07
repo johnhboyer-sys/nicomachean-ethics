@@ -90,13 +90,13 @@ function safeHref(value: string): string | null {
 // "&#106;avascript:" IS "javascript:" — instead of on its spelling. Only the
 // entities the pipeline (and escapeAttr) write; anything else stays literal and
 // is re-escaped, so no decoding can be undone twice.
-const NAMED_ENTITY: Record<string, string> = {
-  amp: '&', lt: '<', gt: '>', quot: '"', apos: "'",
-};
+const NAMED_ENTITY = new Map<string, string>([
+  ['amp', '&'], ['lt', '<'], ['gt', '>'], ['quot', '"'], ['apos', "'"],
+]);
 function decodeEntities(value: string): string {
   if (!value.includes('&')) return value;
-  return value.replace(/&(?:#x([0-9a-f]{1,6})|#(\d{1,7})|(amp|lt|gt|quot|apos));/gi, (m, hex, dec, named) => {
-    if (named) return NAMED_ENTITY[named.toLowerCase()];
+  return value.replace(/&(?:#x([0-9a-f]{1,6})|#(\d{1,7})|([a-z]+));/gi, (m, hex, dec, named) => {
+    if (named) return NAMED_ENTITY.get(named.toLowerCase()) ?? m;
     const cp = hex ? parseInt(hex, 16) : Number(dec);
     return cp > 0 && cp <= 0x10ffff ? String.fromCodePoint(cp) : m;
   });
@@ -563,7 +563,7 @@ export function buildFormsBlock(preamble: string): { html: string; rows: number 
   for (const seg of segments) depthBefore.push(parenDepth(seg, depthBefore[depthBefore.length - 1]));
   const parenthesized = (seg: string, at: number, before: number): boolean =>
     parenDepth(seg.slice(0, at), before) > 0;
-  const formAt = (seg: string, before = 0): number => {
+  const formAt = (seg: string, before: number): number => {
     const cit = seg.indexOf('<span class="lsj-cit">');
     // The whole segment declines for a parenthesized citation, as for "cf.":
     // whatever follows the ")" in the same clause is prose about the aside.
@@ -670,7 +670,7 @@ export function buildFormsBlock(preamble: string): { html: string; rows: number 
   // cell, so "(" landed in the label column opposite "κατ-, συν". Rows stop at
   // the first segment with no form in it; the remainder stays prose.
   let note = '';
-  const labels: string[] = [];
+  let firstLabel: string | null = null;
   for (const [i, seg] of tail.entries()) {
     const at = formAt(seg, depthBefore[firstForm + i]);
     if (at === -1) {
@@ -693,7 +693,7 @@ export function buildFormsBlock(preamble: string): { html: string; rows: number 
     }
     const label = plainLabel(seg.slice(0, at));
     const body = seg.slice(at).replace(/[\s:;\u2014]+$/, '');
-    labels.push(label);
+    firstLabel ??= label;
     rows.push(
       `<div class="lsj-form"><span class="lsj-form-label">${escapeText(label)}</span>` +
       `<span class="lsj-form-body">${body}</span></div>`,
@@ -702,7 +702,7 @@ export function buildFormsBlock(preamble: string): { html: string; rows: number 
   // A table whose only row has no label is not a table. διδάσκαλος and ὅλος
   // opened on such a row once the "cf." rule took their first row away: a
   // citation with nothing to label it. The preamble goes back whole, as prose.
-  if (rows.length === 1 && labels[0] === '') return { html: preamble, rows: 0 };
+  if (rows.length === 1 && firstLabel === '') return { html: preamble, rows: 0 };
   // Align into a label column only when the labels ARE short labels. In εἰμί a
   // single segment packs several forms of which only one is tagged, so its
   // "label" runs to half a line; a column built on that is worse than no

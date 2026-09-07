@@ -13,11 +13,14 @@ Emits these files under build/stage6/:
                  keyed by the SURFACE form as written (the inflected token), so
                  a query can match the exact form rather than the whole lemma.
 
-  english.json — {word: [seg_idx, ...]}
-                 Lowercased, punctuation-stripped English words.
-                 Phrase search is handled at query time via string inclusion
-                 on the (small) English chunk texts in meta.json, so
-                 positions are not stored here.
+  english.json — {word: [[seg_idx, word_pos], ...]}
+                 Lowercased English words as english_words() splits them,
+                 with the word's position in its segment, so a phrase is an
+                 adjacency test over postings exactly as it is for Greek.
+                 (Until 2026-09-07 the postings were bare seg_idxs and the
+                 reader verified a phrase against english_head, which holds
+                 only the first 500 characters; the reader still reads that
+                 shape from an older build.)
 
   meta.json    — [{id, book, column, greek_head, english_head}]
                  Ordered list of segment metadata, indexed by seg_idx.
@@ -242,16 +245,17 @@ def run(manifest: Manifest) -> Path:
     greek_form = _dedupe(form_posts)
 
     # -- English inverted index -----------------------------------------------
-    # word -> sorted list of unique seg_idxs
-    eng_posts: dict[str, set] = defaultdict(set)
+    # word -> [[seg_idx, word_pos], ...] in document order; word_pos counts
+    # every word of the segment's English as english_words() splits it.
+    eng_posts: dict[str, list] = defaultdict(list)
     for seg in segments:
         eng = eng_by_id.get(seg["id"])
         if not eng:
             continue
         si = seg_idx[seg["id"]]
-        for word in english_words(eng["text"]):
-            eng_posts[word].add(si)
-    english_idx = {w: sorted(idxs) for w, idxs in eng_posts.items()}
+        for pos, word in enumerate(english_words(eng["text"])):
+            eng_posts[word].append([si, pos])
+    english_idx = dict(eng_posts)
 
     # -- Segment metadata -----------------------------------------------------
     meta = []

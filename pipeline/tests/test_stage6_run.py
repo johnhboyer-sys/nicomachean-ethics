@@ -217,11 +217,14 @@ def test_english_index_keeps_a_curly_possessive_as_one_word(tmp_path, monkeypatc
     Splitting it into "aristotle" + "s" (the old [a-z']+ scan) made every
     possessive unfindable and put a bare "s" in every such segment."""
     english = _build(tmp_path, monkeypatch)["english"]
-    assert english["aristotle's"] == [0]
-    assert english["isn't"] == [0]
+    # Postings carry the word's position: "Aristotle’s first ‘change’ isn’t
+    # the last." is aristotle's(0) first(1) change(2) isn't(3) the(4) last(5),
+    # so the reader can test a phrase by adjacency, as it does for Greek.
+    assert english["aristotle's"] == [[0, 0]]
+    assert english["isn't"] == [[0, 3]]
     assert "s" not in english and "t" not in english
     # Opening quotes are punctuation, not apostrophes: ‘change’ is "change".
-    assert english["change"] == [0]
+    assert english["change"] == [[0, 2]]
 
 
 def test_english_words_matches_the_readers_fold():

@@ -13,8 +13,6 @@
 // Same host override as data.ts: the desktop app points the whole data layer
 // at an on-disk corpus via globalThis.__ARISTOTLE_DATA_ROOT__ (read lazily so
 // module-import order doesn't matter); the site never sets it.
-import { fetchBook } from './data';
-
 const DEFAULT_ROOT = `${import.meta.env.BASE_URL.replace(/\/$/, '')}/data`;
 const ROOT = () =>
   (globalThis as { __ARISTOTLE_DATA_ROOT__?: string }).__ARISTOTLE_DATA_ROOT__ ?? DEFAULT_ROOT;
@@ -31,7 +29,9 @@ export interface SegMeta {
 }
 
 type GrkIndex = Record<string, [number, number][]>; // fold → [[seg_idx, pos], ...]
-type EngIndex = Record<string, number[]>;            // word → [seg_idx, ...]
+// word → [[seg_idx, word_pos], ...] since 2026-09-07; an older build carries
+// bare seg_idxs, and the reader takes either (see englishPhraseHits).
+type EngIndex = Record<string, number[] | [number, number][]>;
 
 // The word-offset primitive: one running token number per work, in document
 // order, with the structural coordinates beside it. Global offset of a posting
@@ -214,8 +214,17 @@ function compilePattern(
   return { test: key => regex.test(key) };
 }
 
+// The one statement of what an English word is, on the reader's side; stage6's
+// english_words() is its mirror on the index side (pinned by a pipeline test).
+// The page prints possession and elision with U+2019 (Aristotle’s) and quotes
+// with U+2018/U+2019 (‘change’): both become a straight apostrophe, and an
+// apostrophe at a word's edge is a quotation mark, not part of the word.
+const ENGLISH_QUOTES = /[\u2018\u2019\u02bc]/g;
 function englishFold(input: string): string {
-  return input.toLowerCase().replace(/[^a-z']/g, '');
+  return input.toLowerCase().replace(ENGLISH_QUOTES, "'").replace(/[^a-z']/g, '');
+}
+function englishTerm(term: string): string {
+  return term.replace(ENGLISH_QUOTES, "'").replace(/^'+|'+$/g, '');
 }
 
 // -- Posting-list helpers -------------------------------------------------
@@ -235,20 +244,34 @@ function grkPosting(idx: GrkIndex, term: string): Set<number> {
   return result;
 }
 
+const engSeg = (p: number | [number, number]): number => (typeof p === 'number' ? p : p[0]);
+
 function engPosting(idx: EngIndex, term: string): Set<number> {
-  if (term === '*') return new Set(Object.values(idx).flat());
-  const pattern = compilePattern(term, englishFold);
-  if (!pattern) return new Set();
-  if ('exact' in pattern) {
-    return new Set(idx[pattern.exact] ?? []);
-  }
   const result = new Set<number>();
+  if (term === '*') {
+    for (const ps of Object.values(idx)) for (const p of ps) result.add(engSeg(p));
+    return result;
+  }
+  const pattern = compilePattern(englishTerm(term), englishFold);
+  if (!pattern) return result;
+  if ('exact' in pattern) {
+    for (const p of idx[pattern.exact] ?? []) result.add(engSeg(p));
+    return result;
+  }
   for (const key of Object.keys(idx)) {
     if (pattern.test(key)) {
-      for (const si of idx[key]) result.add(si);
+      for (const p of idx[key]) result.add(engSeg(p));
     }
   }
   return result;
+}
+
+// True when the index carries word positions (a build since 2026-09-07).
+function engHasPositions(idx: EngIndex): idx is Record<string, [number, number][]> {
+  for (const ps of Object.values(idx)) {
+    if (ps.length) return typeof ps[0] !== 'number';
+  }
+  return false;
 }
 
 function intersect(a: Set<number>, b: Set<number>): Set<number> {
@@ -274,13 +297,17 @@ function union(a: Set<number>, b: Set<number>): Set<number> {
 // must find its run under whichever of those headwords the token was analysed
 // to. Taking only the first alternative found nothing for exactly the phrases
 // a reader copies off the page.
-function phraseStarts(idx: GrkIndex, terms: string[][]): Map<number, number[]> {
+function phraseStarts(
+  idx: GrkIndex,
+  terms: string[][],
+  fold: (s: string) => string = greekFold,
+): Map<number, number[]> {
   const out = new Map<number, number[]>();
   const perTerm = terms.map(alts => {
-    if (alts.length === 1) return termPositions(idx, alts[0]);
+    if (alts.length === 1) return termPositions(idx, alts[0], fold);
     const merged = new Map<number, number[]>();
     for (const alt of alts) {
-      for (const [si, ps] of termPositions(idx, alt)) {
+      for (const [si, ps] of termPositions(idx, alt, fold)) {
         const arr = merged.get(si);
         if (arr) arr.push(...ps);
         else merged.set(si, [...ps]);
@@ -301,23 +328,16 @@ function phraseStarts(idx: GrkIndex, terms: string[][]): Map<number, number[]> {
   return out;
 }
 
-// English phrase: do all terms appear in order in the text, as whole words?
+// English phrase against a TEXT, for an index built before word positions
+// were stored: do all terms appear in order, as whole words?
 //
 // Whole words, because the postings already guarantee every term occurs as a
 // word somewhere in the segment, so a bare substring test only ADDS false
 // positives: "the good" inside "breathe goodness". Whitespace between the
 // words, any amount; punctuation between them means the phrase is not there.
 // A typed straight apostrophe matches the text's curly one.
-export function engPhraseMatches(text: string, terms: string[]): boolean {
-  if (terms.length === 0) return true;
-  // A word wrapped in single quotes — ‘change’ — closes with the same U+2019
-  // that Aristotle’s elides with, so after the fold the quote marks are
-  // apostrophes glued to the word; the index (stage6 english_words) strips
-  // them at a word's edge, and so must the boundary here. The opening ‘ goes
-  // the same way so that the quoted word still follows its neighbour.
-  const lower = text.toLowerCase()
-    .replace(/[\u2018\u2019\u02bc]/g, "'")
-    .replace(/(^|[^a-z'])'+|'+(?=[^a-z']|$)/g, '$1');
+export function compileEnglishPhrase(terms: string[]): (text: string) => boolean {
+  if (terms.length === 0) return () => true;
   // Keep the wildcards. Folding them away here would leave `hap* virtue` looking
   // for the literal string "hap virtue", so the postings would find the phrase
   // and this check would then throw it away. A leading * asks for any start
@@ -329,53 +349,51 @@ export function engPhraseMatches(text: string, terms: string[]): boolean {
       .join('');
     return { open: raw.startsWith('*'), body };
   });
-  if (parts.some(p => !p.body)) return false;
-  const pattern = parts
+  if (parts.some(p => !p.body)) return () => false;
+  const pattern = new RegExp(parts
     .map(p => {
       const body = [...p.body].map(ch =>
         ch === '*' ? "[a-z']*" : ch === '?' ? "[a-z']" : ch).join('');
       return `${p.open ? '' : "(?<![a-z'])"}${body}(?![a-z'])`;
     })
-    .join('\\s+');
-  return new RegExp(pattern).test(lower);
+    .join('\\s+'));
+  // A word wrapped in single quotes — ‘change’ — closes with the same U+2019
+  // that Aristotle’s elides with, so after the fold the quote marks are
+  // apostrophes glued to the word; the index (stage6 english_words) strips
+  // them at a word's edge, and so must the boundary here.
+  return text => pattern.test(
+    text.toLowerCase()
+      .replace(ENGLISH_QUOTES, "'")
+      .replace(/(^|[^a-z'])'+|'+(?=[^a-z']|$)/g, '$1'),
+  );
+}
+export function engPhraseMatches(text: string, terms: string[]): boolean {
+  return compileEnglishPhrase(terms)(text);
 }
 
-// stage6 keeps only the first 500 characters of a segment's English in
-// meta.json (`english_head`, stage6_search.py) while english.json's postings
-// cover the whole segment. A phrase check against the head alone therefore
-// drops every phrase that stands past that cut, or across it — so a head that
-// is at the cut and does not show the phrase is not evidence either way, and
-// the segment's full text settles it. The reader loads that book to render
-// the result anyway (buildGroups), so the extra fetch is only ever for a
-// candidate that then fails.
+// An English phrase is an adjacency test over the postings, exactly as a Greek
+// one is, when the index carries word positions (builds since 2026-09-07).
+//
+// An older build's postings are bare seg_idxs, and the only text the reader
+// holds then is meta.json's `english_head` — stage6's first 500 characters of
+// the segment. A phrase that stands past that cut is missed on such a build;
+// the alternative, fetching every candidate's whole book, was measured to pull
+// most of the corpus for a phrase of common words, so the older shape keeps the
+// older limit until the corpus is rebuilt.
 export const ENGLISH_HEAD_LIMIT = 500;
 
-async function englishPhraseHits(
-  work: string,
+function englishPhraseHits(
+  idx: EngIndex,
   meta: SegMeta[],
   candidates: Set<number>,
   engTerms: string[],
-): Promise<Set<number>> {
-  const kept = new Set<number>();
-  const byBook = new Map<number, number[]>();
-  for (const si of candidates) {
-    const head = meta[si].english_head;
-    if (engPhraseMatches(head, engTerms)) kept.add(si);
-    else if (head.length >= ENGLISH_HEAD_LIMIT) {
-      const list = byBook.get(meta[si].book);
-      if (list) list.push(si);
-      else byBook.set(meta[si].book, [si]);
-    }
+): Set<number> {
+  if (engHasPositions(idx)) {
+    const starts = phraseStarts(idx, engTerms.map(t => [englishTerm(t)]), englishFold);
+    return new Set([...starts.keys()].filter(si => candidates.has(si)));
   }
-  if (!byBook.size) return kept;
-  await pool([...byBook], 4, async ([book, sis]) => {
-    const data = await fetchBook(work, book);
-    const texts = new Map(data.segments.map(s => [s.id, s.english?.text ?? '']));
-    for (const si of sis) {
-      if (engPhraseMatches(texts.get(meta[si].id) ?? '', engTerms)) kept.add(si);
-    }
-  });
-  return kept;
+  const matches = compileEnglishPhrase(engTerms);
+  return new Set([...candidates].filter(si => matches(meta[si].english_head)));
 }
 
 // -- Public search API ----------------------------------------------------
@@ -411,7 +429,11 @@ export interface SearchOutcome {
 }
 
 // Positions of a single term across segments: seg_idx → [token positions].
-function termPositions(idx: GrkIndex, term: string): Map<number, number[]> {
+function termPositions(
+  idx: GrkIndex,
+  term: string,
+  fold: (s: string) => string = greekFold,
+): Map<number, number[]> {
   const m = new Map<number, number[]>();
   const add = (posts: [number, number][]) => {
     for (const [si, pos] of posts) {
@@ -420,7 +442,7 @@ function termPositions(idx: GrkIndex, term: string): Map<number, number[]> {
       else m.set(si, [pos]);
     }
   };
-  const pattern = compilePattern(term, greekFold);
+  const pattern = compilePattern(term, fold);
   if (!pattern) return m;
   if ('exact' in pattern) {
     add(idx[pattern.exact] ?? []);
@@ -511,7 +533,7 @@ async function searchWork(
     } else {
       engHits = postings.reduce(intersect);
       if (engMode === 'phrase' && engTerms.length > 1) {
-        engHits = await englishPhraseHits(work, meta, engHits, engTerms);
+        engHits = englishPhraseHits(engIdx, meta, engHits, engTerms);
       }
     }
   }

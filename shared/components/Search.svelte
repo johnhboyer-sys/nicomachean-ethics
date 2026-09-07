@@ -105,7 +105,8 @@
     error = '';
     try {
       const works = WORKS.map(w => w.id).filter(id => selectedWorks.has(id));
-      const outcome = await searchPhraseVariants(searchCtx.grkQuery || grkQuery, works);
+      const query = searchCtx.grkQuery || grkQuery;
+      const outcome = await searchPhraseVariants(query, works);
       if (!outcome.results.length && !outcome.readings.length) {
         variantNote = 'No dictionary form is recorded for one of these words, so there is nothing to widen.';
         return;
@@ -116,7 +117,9 @@
       // The widened results are other inflections by definition, so the typed
       // accent pattern must not be held against them — kept, buildGroups would
       // drop τῷ and τοῦ from a search typed as τὸ, the very forms this finds.
-      searchCtx = { ...searchCtx, grkAccentTerms: [] };
+      // Built whole, as runSearch builds it, so the ctx describes the search
+      // that produced these results rather than patching the previous one.
+      searchCtx = { grkQuery: query, engQuery: '', engTerms: [], grkAccentTerms: [] };
       searched = true;
       variantsShown = true;
       if (pages.length) await renderPage(0);
