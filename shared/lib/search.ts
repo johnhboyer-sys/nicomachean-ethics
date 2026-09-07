@@ -8,6 +8,7 @@
 // English search: whitespace-tokenized, lowercase.
 // Phrase search: after intersection, verify token adjacency in segment data.
 // Cross-language: AND (intersection) or OR (union) the two result sets.
+import { memoAsyncBy } from './memo';
 
 // Honour Astro's base path. BASE_URL may lack a trailing slash, so strip + join.
 // Same host override as data.ts: the desktop app points the whole data layer
@@ -82,51 +83,54 @@ export type MatchMode = 'lemma' | 'form' | 'headword';
 // Safari/WebKit, where a large simultaneous fetch burst can drop a request with
 // "TypeError: Load failed" and (via Promise.all) sink the whole search.
 
-const _fileCache = new Map<string, Promise<unknown>>();
+// Each loader memoises through lib/memo.ts, which evicts a rejection so a
+// transient drop can be retried — a rejected promise must NOT stay cached
+// (that would poison every later search in the tab). One memo per loader,
+// rather than the single `_fileCache` these shared before: the three key spaces
+// never overlapped anyway, which is why the corpus-level one needed its "::"
+// prefix (so a path could not collide with a work called "lemma-map") and now
+// does not.
 
-function loadIndex<T>(work: string, file: string): Promise<T> {
-  const key = `${work}/${file}`;
-  const cached = _fileCache.get(key);
-  if (cached) return cached as Promise<T>;
-  const p = fetch(`${searchBase(work)}/${file}`).then(r => {
+// A per-work index is keyed `<work>/<file>`, the same string the error message
+// quotes; the search directory sits between the two in the URL.
+const searchUrl = (key: string) => {
+  const at = key.indexOf('/');
+  return `${searchBase(key.slice(0, at))}/${key.slice(at + 1)}`;
+};
+
+const _index = memoAsyncBy<string, unknown>(key =>
+  fetch(searchUrl(key)).then(r => {
     if (!r.ok) throw new Error(`HTTP ${r.status} for ${key}`);
     return r.json();
-  });
-  // Evict on failure so a transient drop can be retried — a rejected promise
-  // must NOT stay cached (that would poison every later search in the tab).
-  p.catch(() => { if (_fileCache.get(key) === p) _fileCache.delete(key); });
-  _fileCache.set(key, p);
-  return p as Promise<T>;
+  }));
+
+function loadIndex<T>(work: string, file: string): Promise<T> {
+  return _index(`${work}/${file}`) as Promise<T>;
 }
 
-// Corpus-level indexes live beside the per-work ones rather than inside them.
-// Same cache, keyed by path so it cannot collide with a work called "lemma-map".
-function loadShared<T>(path: string): Promise<T> {
-  const key = `::${path}`;
-  const cached = _fileCache.get(key);
-  if (cached) return cached as Promise<T>;
-  const p = fetch(`${ROOT()}/${path}`).then(r => {
+// Corpus-level indexes live beside the per-work ones rather than inside them,
+// so they are fetched from the root and memoised on their own path.
+const _shared = memoAsyncBy<string, unknown>(path =>
+  fetch(`${ROOT()}/${path}`).then(r => {
     if (!r.ok) throw new Error(`HTTP ${r.status} for ${path}`);
     return r.json();
-  });
-  p.catch(() => { if (_fileCache.get(key) === p) _fileCache.delete(key); });
-  _fileCache.set(key, p);
-  return p as Promise<T>;
+  }));
+
+function loadShared<T>(path: string): Promise<T> {
+  return _shared(path) as Promise<T>;
 }
 
 // The grammatical column is binary (one small int per token, indexed by global
-// offset), so it needs arrayBuffer rather than json. Cached the same way.
-function loadBinary(work: string, file: string): Promise<ArrayBuffer> {
-  const key = `${work}/${file}`;
-  const cached = _fileCache.get(key);
-  if (cached) return cached as Promise<ArrayBuffer>;
-  const p = fetch(`${searchBase(work)}/${file}`).then(r => {
+// offset), so it needs arrayBuffer rather than json. Cached the same way, in
+// its own memo — the one .bin file never shares a key with a JSON index.
+const _binary = memoAsyncBy<string, ArrayBuffer>(key =>
+  fetch(searchUrl(key)).then(r => {
     if (!r.ok) throw new Error(`HTTP ${r.status} for ${key}`);
     return r.arrayBuffer();
-  });
-  p.catch(() => { if (_fileCache.get(key) === p) _fileCache.delete(key); });
-  _fileCache.set(key, p);
-  return p as Promise<ArrayBuffer>;
+  }));
+
+function loadBinary(work: string, file: string): Promise<ArrayBuffer> {
+  return _binary(`${work}/${file}`);
 }
 
 // Run `fn` over `items` with at most `limit` in flight at once (bounds the

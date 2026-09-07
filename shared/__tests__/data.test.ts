@@ -139,6 +139,17 @@ describe('a failed fetch is not remembered', () => {
     await expect(fetchBekkerIndex()).resolves.toEqual({ '1094a': [{ work: 'EN', book: 1, lo: 1, hi: 20 }] });
   });
 
+  it('fetchLsjShard resolves {} on a missing shard without caching the miss', async () => {
+    // The one deliberate exception: a missing LSJ shard is not an error (the
+    // corpus need not carry every letter), so this resolves {} where the others
+    // throw — but the {} must not be cached, or a shard that 404s mid-deploy
+    // stays empty for the session.
+    mockFetch({});
+    await expect(fetchLsjShard('z')).resolves.toEqual({});
+    mockFetch({ '/lsj/z.json': { 'zw/w': { key: 'zw/w', head: 'ζώω', html: '<p>live</p>' } } });
+    await expect(fetchLsjShard('z')).resolves.toMatchObject({ 'zw/w': { head: 'ζώω' } });
+  });
+
   it('fetchLemmata rejects on a bad response and retries, rather than caching {}', async () => {
     mockFetch({});
     await expect(fetchLemmata()).rejects.toThrow('lemmata.json: 404');
