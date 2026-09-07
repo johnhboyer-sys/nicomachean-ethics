@@ -38,20 +38,24 @@ Highest value per unit effort. Each is: vendor per-book HTML → run gloss-align
 
 | # | Translation | Work(s) | Clean source | Bekker | Notes |
 |---|---|---|---|---|---|
-| A1 | **O. F. Owen, Organon (1853, Bohn)** | Cat, Int, APr, APo, Top, SE | Wikisource `Organon_(Owen)` (per-work subpages) | none | **Highest leverage: 2nd translation for SIX logic works at once.** ⚠️ flagged "incomplete" — verify all 6 fully transcribed before ingest; fall back to Vol.1/2 djvu for gaps. |
-| A2 | **W. Rhys Roberts, Rhetoric (Oxford, 1924)** | Rhet | MIT ICA `Aristotle/rhetoric` (+ `.mb.txt`) | none | The Oxford-Translation Rhetoric. Same MIT-sourced shape as existing `*-smith` etc. Wikisource alt copy exists. |
-| A3 | **S. H. Butcher, Poetics (1895)** | Poet | Gutenberg #1974 / MIT / Wikisource (3 clean copies) | none | Cleanest item in the whole set. |
-| A4 | **D. P. Chase, NE (1847)** | EN | Gutenberg #8438 (Wikisource mirror) | none | Strip the Everyman J.A. Smith intro. EN already has 3 — adds a 4th classic. |
-| A5 | **F. H. Peters, NE (1881)** | EN | Standard Ebooks (Peters) | dropped | Original had Bekker margins; Standard Ebooks omitted them. Clean prose. |
-| A6 | **William Ellis, Politics (1776/1912)** | Pol | Gutenberg #6762 | **inline** `[Bekker 1252a]` | Standout: clean **and** inline (page-level) Bekker → best auto-anchor of the set. |
-| A7 | **Edwin Wallace, De Anima (1882)** | DA | Wikisource `Aristotle's_Psychology` (English-only transcription) | none | ⚠️ transcribed-not-validated; one fetch truncated mid-Bk II — verify completeness vs scan. |
-| A8 | **E. S. Bouchier, Posterior Analytics (1901)** | APo | OLL `bouchier-posterior-analytics` + Wikisource | verify | Short (~145pp), self-contained. (APo also gets Owen via A1.) |
-| A9 | **Richard Cresswell, History of Animals (1862, Bohn)** | HA | Gutenberg #59058 (1887 Bell repr.) | none | Human-proofread, complete 10 books. Wikisource is a stub — use Gutenberg. |
+| A1 | **O. F. Owen, Organon (1853, Bohn)** | Cat, Int, APr, APo, Top, SE | Wikisource `Organon_(Owen)` (per-work subpages) | none | **Highest leverage: 2nd translation for SIX logic works at once.** ⚠️ flagged "incomplete" — verify all 6 fully transcribed before ingest; fall back to Vol.1/2 djvu for gaps. ✅ **Done** — `sources/cat-owen`, `int-owen`, `apr-owen`, `apo-owen`, `top-owen`, `se-owen` (+ `isa-owen`, the Isagoge's primary, a bonus); registry short name `Owen` (overlay slot in Cat/Int, secondary in APr/Top/SE, third in APo); wired in `manifests/Cat-public.yaml`, `Int-public.yaml`, `APr.yaml`, `APo.yaml`, `Top.yaml`, `SE.yaml`. No `anchors.yaml` in any Owen dir (interpolated gutter, step 2 not done). Live: in the tree at `040423e` (2026-07-27); the 2026-08-13 full `build:public` deploy names the Owen sources, and 2026-08-22 rebuilt the corpus (`DEPLOY-STATUS.md`). |
+| A2 | **W. Rhys Roberts, Rhetoric (Oxford, 1924)** | Rhet | MIT ICA `Aristotle/rhetoric` (+ `.mb.txt`) | none | The Oxford-Translation Rhetoric. Same MIT-sourced shape as existing `*-smith` etc. Wikisource alt copy exists. ✅ **Done** — `sources/rhet-roberts/` (3 books); registry `Roberts` (secondary); `manifests/Rhet.yaml` `english.secondary`. No `anchors.yaml`. Live via the full corpus deploys of 2026-08-13 and 2026-08-22 (`DEPLOY-STATUS.md`). |
+| A3 | **S. H. Butcher, Poetics (1895)** | Poet | Gutenberg #1974 / MIT / Wikisource (3 clean copies) | none | Cleanest item in the whole set. ✅ **Done** — `sources/poet-butcher/`; registry `Butcher` (secondary); `manifests/Poet.yaml` `english.secondary`. No `anchors.yaml`. Live via the full corpus deploys of 2026-08-13 and 2026-08-22 (`DEPLOY-STATUS.md`). |
+| A4 | **D. P. Chase, NE (1847)** | EN | Gutenberg #8438 (Wikisource mirror) | none | Strip the Everyman J.A. Smith intro. EN already has 3 — adds a 4th classic. ⏳ not done (no `sources/en-chase`, no `chase` in `works.ts`, checked 2026-09-07). |
+| A5 | **F. H. Peters, NE (1881)** | EN | Standard Ebooks (Peters) | dropped | Original had Bekker margins; Standard Ebooks omitted them. Clean prose. ✅ **Done** — `sources/en-peters/` (10 books); registry `Peters` (overlay slot, EN's 4th); `manifests/EN.yaml` `english.overlays`. No `anchors.yaml`. Live via the full corpus deploys of 2026-08-13 and 2026-08-22 (`DEPLOY-STATUS.md`). |
+| A6 | **William Ellis, Politics (1776/1912)** | Pol | Gutenberg #6762 | **inline** `[Bekker 1252a]` | Standout: clean **and** inline (page-level) Bekker → best auto-anchor of the set. ✅ **Done** — `sources/pol-ellis/` (8 books); registry `Ellis` (secondary); `manifests/Pol-public.yaml` `english.secondary`. No `anchors.yaml` in the dir (the inline Bekker has not been turned into an anchor set). Live via the full corpus deploys of 2026-08-13 and 2026-08-22 (`DEPLOY-STATUS.md`). |
+| A7 | **Edwin Wallace, De Anima (1882)** | DA | Wikisource `Aristotle's_Psychology` (English-only transcription) | none | ⚠️ transcribed-not-validated; one fetch truncated mid-Bk II — verify completeness vs scan. ✅ **Done** — `sources/da-wallace/` (3 books) **with** `anchors.yaml` (433 entries, committed `f6b2342` 2026-08-11; wired `1a86339`) — the only Batch A item that got step 2; registry `Wallace` (secondary); `manifests/DA.yaml` `english.secondary.anchors`. Live: DA re-anchored from it in the 2026-08-11 deploy (`DEPLOY-STATUS.md`). |
+| A8 | **E. S. Bouchier, Posterior Analytics (1901)** | APo | OLL `bouchier-posterior-analytics` + Wikisource | verify | Short (~145pp), self-contained. (APo also gets Owen via A1.) ✅ **Done** — `sources/apo-bouchier/` (2 books); registry `Bouchier` (secondary; Owen is APo's third); `manifests/APo.yaml` `english.secondary`. No `anchors.yaml`. Live: `/APo/book/1/` verified in the 2026-08-13 full corpus deploy (`DEPLOY-STATUS.md`). |
+| A9 | **Richard Cresswell, History of Animals (1862, Bohn)** | HA | Gutenberg #59058 (1887 Bell repr.) | none | Human-proofread, complete 10 books. Wikisource is a stub — use Gutenberg. ⏳ not done (no `sources/ha-cresswell`; HA carries only Thompson in `works.ts`, checked 2026-09-07). |
 
 ## Batch B — CLEANUP (English-only OCR, light correction pass)
 
 Worth doing but each carries an OCR-correction cost. No Greek-script
 contamination, so a single proofreading pass per work.
+
+*Status 2026-09-07:* none of B1–B9 is started — no `sources/` dir exists for Hammond,
+M'Mahon, Welldon, Jebb, Bywater, Williams or Wicksteed–Cornford, and none is in
+`shared/lib/works.ts`.
 
 | # | Translation | Work(s) | OCR source | Bekker | Effort flag |
 |---|---|---|---|---|---|
@@ -69,7 +73,7 @@ contamination, so a single proofreading pass per work.
 
 | # | Translation | Work(s) | Why hard |
 |---|---|---|---|
-| C1 | R. D. Hicks, De Anima (1907) | DA | Greek+English facing pages **and** a long Greek-script commentary that bleeds mojibake into the English. Needs page-segmented extraction or re-OCR. We keep Smith anyway → low priority. |
+| C1 | R. D. Hicks, De Anima (1907) | DA | Greek+English facing pages **and** a long Greek-script commentary that bleeds mojibake into the English. Needs page-segmented extraction or re-OCR. We keep Smith anyway → low priority. *2026-09-07:* the scan is vendored with provenance (`sources/da-hicks/PROVENANCE.md`, PR #75 per `DEPLOY-STATUS.md` 2026-08-13) as the commentary-layer target, not transcribed or registered — still not a translation on the site. |
 | C2 | Thomas Taylor, Physics / Cael / GC (1806–07) | Phys, Cael, GC | Archaic English, dirty early-19thc scans, bundled multi-treatise volumes (Physics = Works Vol.I 1806; Cael+GC+Meteors = 1807 vol). Hard to isolate clean per-treatise scans. Low value (archaic). |
 
 ## Batch D — EXCLUDE (not verbatim translations)

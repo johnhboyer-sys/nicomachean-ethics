@@ -22,12 +22,12 @@ milestoned English path (NE-grade) or the First1KGreek + MIT-archive path (DA).
 | 010 | EN | Nicomachean Ethics | 176 | 10 | ✅ built (shipped on main) |
 | 002 | DA | De Anima | 68 | 3 | ✅ built (First1K+MIT path) |
 | 034 | Poet | Poetics | 32 | 1 | ✅ built + registered |
-| 045 | Virt | De virtutibus et vitiis | 6 | 1 | ⏳ simplest new |
-| 029 | Oec | Oeconomica | 22 | 3 | ⏳ |
-| 038 | Rhet | Rhetorica | 133 | 3 | ⏳ |
-| 035 | Pol | Politica | 182 | 8 | ⏳ |
-| 025 | Meta | Metaphysica | 228 | 14 | ⏳ big |
-| 009 | EE | Ethica Eudemia | 72 | 8* | ⚠ shares books IV–VI with NE V–VII; defer |
+| 045 | Virt | De virtutibus et vitiis | 6 | 1 | ✅ built + registered as `VV` (spurious) — shipped 2026-07-09, PR #27 (`manifests/VV.yaml`, `shared/lib/works.ts`, `DEPLOY-STATUS.md` 2026-07-09) |
+| 029 | Oec | Oeconomica | 22 | 3 | ✅ built + registered (spurious) — shipped 2026-07-08, PR #21 (`manifests/Oec.yaml`, `shared/lib/works.ts`, `DEPLOY-STATUS.md` 2026-07-08); see `dubious-works.md` |
+| 038 | Rhet | Rhetorica | 133 | 3 | ✅ built + registered (Freese primary + Roberts secondary) — live; `/Rhet` ch-2-1 verified in the 2026-07-10 deploy (`manifests/Rhet.yaml`, `shared/lib/works.ts`, `DEPLOY-STATUS.md`) |
+| 035 | Pol | Politica | 182 | 8 | ✅ built + registered — live; public build serves Jowett + Ellis from `manifests/Pol-public.yaml`, Rackham gated (`shared/lib/works.ts`, `DEPLOY-STATUS.md` 2026-07-09 "Pol/EE/Meta serve Jowett/Solomon/Ross publicly") |
+| 025 | Meta | Metaphysica | 228 | 14 | ✅ built + registered — live; public build serves Ross from `manifests/Meta-public.yaml`, Tredennick gated; `/Meta/book/7/` live-verified 2026-08-22 (`shared/lib/works.ts`, `DEPLOY-STATUS.md`) |
+| 009 | EE | Ethica Eudemia | 72 | 8* | ✅ built + registered as 5 Eudemian-proper books with the IV–VI gap annotated in the reader (`manifests/EE.yaml` / `EE-public.yaml`, `shared/lib/works.ts` `missing: IV–VI`); public build serves Solomon (`DEPLOY-STATUS.md` 2026-07-09). Was: ⚠ shares books IV–VI with NE V–VII; defer |
 
 ### Tier B — Greek only (need First1KGreek chapters + MIT-archive English)
 Big biological/logical works with Bekker Greek but no Perseus TEI: Historia
@@ -35,6 +35,10 @@ animalium (306), Problemata (218), Physica (172), Analytica (154), De gen.
 animalium (150), Topica (130), De partibus animalium (118), Meteorologica (106),
 De caelo (92), De gen. et corr. (50), Sophistici elenchi (42), Categoriae (30),
 De interpretatione (18), De motu animalium (14), De memoria (9), etc.
+*Shipped (verified 2026-09-07):* every work named here except Problemata now has a
+`manifests/<Id>.yaml` and a `shared/lib/works.ts` entry (HA, Phys, APr/APo, GA, Top, PA,
+Mete, Cael, GC, SE, Cat, Int, MA, Mem) and was in the full 41-work `build:public` deploy
+of 2026-07-13 (`DEPLOY-STATUS.md`). Problemata is still unbuilt.
 
 ### Excluded
 Athenaion Politeia (003 — not Bekker-paginated), Magna moralia / Protrepticus /
@@ -79,6 +83,9 @@ Tredennick as the Bekker reference). Aligner port: YES.
 
 ## Remaining authentic Tier-A (after Metaphysics)
 Politica (035, 8 bk), Rhetorica (038, 3 bk). Eudemia (009) — shares books with NE.
+*Shipped (verified 2026-09-07):* all three are built, registered and live — see the Tier A
+table above for the evidence per row (`manifests/Pol.yaml`, `Rhet.yaml`, `EE.yaml`;
+`shared/lib/works.ts`; `DEPLOY-STATUS.md`).
 
 ## Aligner port — status ✅ COMPLETE
 Package ported + generalized (110de85), then wiring finished this session:
@@ -231,12 +238,15 @@ Lulofs (OCT, 1965). Standard grc-TEI/archive recipe (like Phys/HA/PA).
   match). App builds (102 pages), home II.c shows all 5 biological works as
   clickable, reader renders Greek‖English correctly (screenshots verified). All PD
   → deployable. **NOT committed/pushed (awaiting John's review).**
+  *Shipped (verified 2026-09-07):* `manifests/MA.yaml`, `IA.yaml`, `GA.yaml` and their
+  `shared/lib/works.ts` entries are on main; the three were among the 41 works of the full
+  `build:public` deploy of 2026-07-13 (a) and every full rebuild since (`DEPLOY-STATUS.md`).
 
 ## Per-work progress
 - Poetics (034) ✅ built+registered (pre-existing)
 - Aligner port ✅ wiring complete
-- Metaphysics (025) ✅ built + registered  (Tredennick — withhold till 2029)
-- Politics (035) ✅ built + registered     (Rackham — withhold till ~2028)
-- Rhetoric (038) ✅ built + registered     (Freese PD — DEPLOYABLE)
+- Metaphysics (025) ✅ built + registered  (Tredennick — withhold till 2029) — shipped: live with Ross as the public primary (`manifests/Meta-public.yaml`; `DEPLOY-STATUS.md` 2026-07-09, 2026-08-22)
+- Politics (035) ✅ built + registered     (Rackham — withhold till ~2028) — shipped: live with Jowett primary + Ellis secondary (`manifests/Pol-public.yaml`; `DEPLOY-STATUS.md` 2026-07-09)
+- Rhetoric (038) ✅ built + registered     (Freese PD — DEPLOYABLE) — shipped: live, Freese + Roberts secondary (`manifests/Rhet.yaml`; `DEPLOY-STATUS.md` 2026-07-10)
 - All 5 prior works regression-pass identical after each change.
-- Remaining authentic: Eudemian Ethics (009) shares books IV–VI with NE V–VII → defer/special-case.
+- Remaining authentic: Eudemian Ethics (009) shares books IV–VI with NE V–VII → defer/special-case. — shipped: built as 5 Eudemian-proper books with the gap annotated (`manifests/EE.yaml`, `EE-public.yaml`; `shared/lib/works.ts`; live per `DEPLOY-STATUS.md` 2026-07-09).
