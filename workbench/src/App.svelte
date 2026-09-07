@@ -849,6 +849,7 @@
       works={works.filter((w) => !isDocumentWork(w) && !corpora[w.id])}
       onClose={() => (addWorkOpen = false)}
       onOnboarded={handleOnboarded}
+      onImportSource={() => (sourceImportOpen = true)}
     />
   {/if}
 

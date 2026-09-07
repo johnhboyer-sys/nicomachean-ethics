@@ -24,6 +24,10 @@
     onClose: () => void;
     /** Called after a work onboards fully (corpus ready). */
     onOnboarded: (workId: string) => void;
+    /** "Import a text…" — where the dialog sends someone when every corpus
+     * work is already here. Same action as the library rail's button; App
+     * passes the same opener. */
+    onImportSource?: () => void;
   } = $props();
 
   // Only offer works this app version actually knows how to onboard.
@@ -44,6 +48,12 @@
       phase = 'pick';
     })();
   });
+
+  /** The empty state's one action: close this dialog and open Import a text…. */
+  function importInstead() {
+    onClose();
+    onImportSource?.();
+  }
 
   async function chooseWork(work: WorkManifest) {
     chosen = work;
@@ -104,7 +114,12 @@
         <p class="line">{note}</p>
       {:else if phase === 'pick'}
         {#if candidates.length === 0}
-          <p class="line">Every available work is already here.</p>
+          {#if onImportSource}
+            <p class="line">Every available work is already here — to bring in another text, import it.</p>
+            <button class="folder-btn" onclick={importInstead}>Import a text…</button>
+          {:else}
+            <p class="line">Every available work is already here.</p>
+          {/if}
         {:else}
           <p class="line">Choose a work to add:</p>
           <ul class="work-list">

@@ -77,6 +77,7 @@ shared with other checkouts and can hold a different revision).
    a true first-run empty state.
 3. **Parked on John's taste**: heading style — big titles vs small labels; and
    drag-a-chapter-into-a-Book (he chose "skip for now" once already).
-4. **Offered, not built**: the Add work… dialog's dead end. When every corpus
-   work is already in the library it says "Every available work is already
-   here" and stops, instead of pointing at "Import a text…".
+4. **Built 2026-09-07, untested in the .app**: the Add work… dialog's dead end.
+   When every corpus work is already in the library it now says so in one
+   sentence and offers "Import a text…" (the rail's own opener, passed in by
+   App). Source-scan test only; needs John's eye in the real app.

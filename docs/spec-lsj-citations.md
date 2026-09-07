@@ -1,7 +1,10 @@
 # Spec: live LSJ citations (feature 5)
 
-*Status: ready to implement. Parent: `corpus-analysis-features.md` §5. No TLG
-disc needed at runtime; the LSJ TEI ships with Diogenes.*
+*Status: shipped — PR #81 (merge `2d40d8a`, commit `099ab4b`, 2026-08-18):
+`lsj_citation_map.py` + the `bibl` branch in `stage5_lsj.py` render resolving
+`Arist.` citations as reader links; `check-links.mjs` gates them. Parent:
+`corpus-analysis-features.md` §5. No TLG disc needed at runtime; the LSJ TEI
+ships with Diogenes.*
 
 ## Goal
 

@@ -17,21 +17,27 @@ Live at **[johnhboyer-sys.github.io/aristotle-reader/](https://johnhboyer-sys.gi
 | Translation picker | Multiple public-domain English translations available for most works (e.g. Ross, Rackham, Jowett, Fyfe, Owen) |
 | Print / PDF | Browser print saves a clean bilingual PDF (landscape) or English-only portrait layout |
 
-### Works covered (26 total)
+### Works covered (41 total)
 
-**Logic (Organon):** Categories, De Interpretatione, Prior Analytics, Posterior Analytics, Topics, Sophistical Refutations
+The registry is `shared/lib/works.ts`; the divisions below are its `CATEGORIES`.
 
-**Natural Philosophy:** Physics, On the Heavens, On Generation and Corruption, Meteorology, De Anima
+**I. Logic (Organon):** Categories, De Interpretatione, Prior Analytics, Posterior Analytics, Topics, Sophistical Refutations
 
-**Parva Naturalia:** Sense and Sensibilia, On Memory, On Sleep, On Dreams, On Divination in Sleep, On Length and Shortness of Life, On Youth, Old Age, Life and Death, and Respiration
+**II.a Natural Philosophy — Major Works on Nature:** Physics, On the Heavens, On Generation and Corruption, Meteorology, De Anima
 
-**Biological Works:** History of Animals, Parts of Animals, Movement of Animals, Progression of Animals, Generation of Animals
+**II.b Short Works on Nature (Parva Naturalia):** Sense and Sensibilia, On Memory, On Sleep, On Dreams, On Divination in Sleep, On Length and Shortness of Life, On Youth, Old Age, Life and Death, and Respiration
 
-**Metaphysics**
+**II.c Biological Works:** History of Animals, Parts of Animals, Movement of Animals, Progression of Animals, Generation of Animals
 
-**Moral and Political Philosophy:** Nicomachean Ethics, Eudemian Ethics, Politics
+**III. Metaphysics**
 
-**Rhetoric and Poetics:** Rhetoric, Poetics
+**IV. Moral and Political Philosophy:** Nicomachean Ethics, Eudemian Ethics, Politics
+
+**V. Rhetoric and Poetics:** Rhetoric, Poetics
+
+**Works of doubted or spurious authorship** (an appendix outside the numbered divisions; each carries its badge from the registry's `authenticity` field — all eleven are marked spurious): De Mundo, De Melisso Xenophane Gorgia, Mechanica, De Coloribus, De Audibilibus, Physiognomonica, De Mirabilibus Auscultationibus, De Lineis Insecabilibus, Ventorum Situs, De Virtutibus et Vitiis, Oeconomica
+
+**Also carried:** Porphyry's Isagoge — not a home-page division; surfaced as the commentary on the Categories, and readable at `/Isa`.
 
 ---
 
@@ -65,9 +71,11 @@ npm run build:public
 That single command:
 
 - rebuilds the generated data in the normal local path, `build/dist/`, so the app still reads through `app/public/data -> ../../build/dist`;
-- uses `manifests/<work>-public.yaml` whenever that file exists, falling back to `manifests/<work>.yaml` only for works with no public/private split;
+- uses `manifests/<work>-public.yaml` whenever that file exists, falling back to `manifests/<work>.yaml` only for works with no public/private split (each work runs as `python -m aristotle_pipeline all --work <work> --public`);
 - removes old generated output first, so a previous local/full build cannot leave private overlay JSON behind;
-- runs the Astro build as `PUBLIC_HIDE_PRIVATE=1 npm run build`, which drops private translation registry entries from the public bundle.
+- runs stage 8 (the corpus-wide phrase index), the corpus preflight validation, and the shared-LSJ coverage check;
+- runs the Astro build with `PUBLIC_SHOW_PRIVATE=0` (`npm run build` in `app/`). Private translation registry entries are compiled in only when `PUBLIC_SHOW_PRIVATE=1`, which only `npm run dev` sets; unset or `0` hides them, and the public build forces `0` so a stray shell setting cannot leak them;
+- checks link integrity of the built site (`scripts/check-links.mjs`), which must report 0 broken.
 
 A GitHub Pages deploy should therefore use exactly:
 
@@ -82,12 +90,12 @@ Deploy `app/dist/` only after that command succeeds. Do not deploy an app build 
 
 ```bash
 cd pipeline
-WORK=ne uv run python -m aristotle_pipeline all
+uv run python -m aristotle_pipeline all --work EN
 ```
 
-Set `WORK` to the work's short identifier (`ne`, `pol`, `rhet`, `poet`, `da`, `phys`, `meta`, `gc`, `mete`, `apr`, `apo`, `top`, `se`, `ha`, `cat`, `de_int`, `sens`, `mem`, `somn`, `insomn`, `div_somn`, `juv`, `ee`, …). The pipeline writes data to `build/dist/{WORK}/`.
+`--work` takes the work's registry id, which is also its manifest filename stem (`EN`, `Pol`, `Rhet`, `Poet`, `DA`, `Phys`, `Meta`, `GC`, `Mete`, `APr`, `APo`, `Top`, `SE`, `HA`, `Cat`, `Int`, `Sens`, `Mem`, `Somn`, `Insomn`, `DivSomn`, `Juv`, `EE`, …; default `EN`). Add `--public` to use `manifests/<work>-public.yaml` when it exists. The pipeline writes data to `build/dist/{work}/`.
 
-To run a single stage: `WORK=ne uv run python -m aristotle_pipeline stage2`
+To run a single stage: `uv run python -m aristotle_pipeline stage2 --work EN`
 
 **Pipeline stages:**
 
@@ -100,15 +108,9 @@ To run a single stage: `WORK=ne uv run python -m aristotle_pipeline stage2`
 | 5 | Streams `grc.lsj.xml`; extracts corpus-occurring lemmata only; letter-sharded HTML |
 | 6 | Builds inverted search indexes (Greek lemma + English word) with phrase search support |
 | 7 | Emits final per-work `build/dist/{WORK}/` tree: `book-*.json`, `analyses.json`, `search/`, `manifest.json`; LSJ entries are merged into one corpus-wide shared `build/dist/lsj/<letter>.json` (served at `/data/lsj/`, fetched once across works — not duplicated per work) |
+| 8 | Corpus-wide (no `--work`, not part of `all`): merges every work's token stream into the phrase index behind `/phrases` — surface-form and lemma streams over the Greek, plus an English stream over the translations |
 
-**Alignment pipeline** (produces `anchors.yaml` per work, then wired into Stage 1):
-
-```bash
-cd pipeline
-WORK=ne uv run python stage1_gloss.py    # extract Greek glosses
-WORK=ne uv run python gloss_align.py     # align translation to Greek spine
-WORK=ne uv run python gloss_map_to_anchors.py  # emit anchors.yaml
-```
+**Alignment pipeline** (produces `anchors.yaml` per work, then wired into Stage 1): the aligner lives in `pipeline/aristotle_pipeline/align/` (see its `README.md` for usage); `uv run python tools/gloss_map_to_anchors.py <WORK> <vid>` emits `anchors.yaml`.
 
 ### 2. Run the app
 
@@ -148,34 +150,39 @@ aristotle-reader/
 │   └── aristotle_pipeline/
 │       ├── stage1_greek.py      # TLG export + spine parser
 │       ├── stage1_english.py    # Perseus TEI chunker + alignment
-│       ├── stage1_gloss.py      # Greek gloss extractor (for alignment)
-│       ├── gloss_align.py       # translation aligner (gloss method)
-│       ├── gloss_map_to_anchors.py  # anchors.yaml emitter
+│       ├── align/               # translation aligner (see its README.md)
 │       ├── stage2_validate.py   # validation suite
-│       ├── stage3_tokenize.py   # Greek tokenizer
-│       ├── betacode.ts / beta.py  # Unicode ↔ Beta Code conversion
+│       ├── stage3_tokenize.py   # Greek tokenizer (+ the text-quality gate, quality.py)
+│       ├── beta.py              # Unicode ↔ Beta Code conversion
 │       ├── stage4_morphology.py # analyses lookup
-│       ├── stage5_lsj.py        # LSJ extraction
+│       ├── stage5_lsj.py        # LSJ extraction (+ lsj_citation_map.py: citations → reader links)
 │       ├── stage6_search.py     # search index build
 │       ├── stage7_emit.py       # final dist emission
+│       ├── stage8_ngrams.py     # corpus-wide phrase index
 │       ├── config.py            # manifest loading, path resolution
 │       └── refs.py              # Bekker reference utilities
+│   └── tools/                   # one-off helpers, incl. gloss_map_to_anchors.py
+├── shared/                      # reader core shared with the sibling readers
+│   ├── components/
+│   │   ├── Reader.svelte        # parallel text view + word popups
+│   │   ├── WordPopup.svelte     # morphology + LSJ popup
+│   │   └── Search.svelte        # search UI + engine
+│   └── lib/
+│       ├── works.ts             # work registry + corpus categories
+│       ├── data.ts              # data-fetch helpers
+│       └── search.ts            # search engine (inverted index + phrase)
 ├── app/                         # Astro + Svelte static site
 │   └── src/
 │       ├── pages/
-│       │   ├── index.astro      # home page (5 corpus divisions)
-│       │   ├── [work]/          # per-work reading view
+│       │   ├── index.astro      # home page (5 corpus divisions + appendix)
+│       │   ├── [work]/          # per-work landing + reading view
 │       │   ├── search.astro     # full-corpus search
+│       │   ├── advanced.astro   # advanced search
+│       │   ├── phrases.astro    # phrase index
+│       │   ├── lemma/           # per-lemma pages
 │       │   ├── support.astro    # support / donation page
 │       │   └── attribution.astro
-│       ├── components/
-│       │   ├── Reader.svelte    # parallel text view + word popups
-│       │   ├── WordPopup.svelte # morphology + LSJ popup
-│       │   └── Search.svelte    # search UI + engine
-│       └── lib/
-│           ├── works.ts         # work registry + corpus categories
-│           ├── data.ts          # data-fetch helpers
-│           └── search.ts        # search engine (inverted index + phrase)
+│       └── components/          # Astro shells around the shared components
 └── build/                       # generated, gitignored
     └── dist/{work}/             # ready-to-serve frontend data per work
 ```
