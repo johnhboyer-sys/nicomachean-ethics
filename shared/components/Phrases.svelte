@@ -16,6 +16,7 @@
     lemmaOptions,
     lemmaReadings,
     offsetRef,
+    pool,
     type Offsets,
   } from '../lib/search';
   import { WORKS, getWork, workPath } from '../lib/works';
@@ -504,18 +505,6 @@
     });
     offsetsCache.set(work, promise);
     return promise;
-  }
-
-  // Bound the offsets burst: a common phrase can span most of the corpus.
-  async function pool<T>(items: T[], limit: number, fn: (item: T, index: number) => Promise<void>) {
-    let next = 0;
-    const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
-      while (next < items.length) {
-        const index = next++;
-        await fn(items[index], index);
-      }
-    });
-    await Promise.all(workers);
   }
 
   async function loadPhraseDetails(id: string, item: PhraseItem) {

@@ -238,6 +238,8 @@ export function fetchColumns(work: string): Promise<Record<string, ColumnRef[]>>
     if (!r.ok) throw new Error(`${work} columns: ${r.status}`);
     return r.json();
   });
+  // Evict a failure so the next jump can retry, as every other fetcher here does.
+  p.catch(() => { if (_columnsCache.get(work) === p) _columnsCache.delete(work); });
   _columnsCache.set(work, p);
   return p;
 }
@@ -256,8 +258,15 @@ let _bekkerCache: Promise<Record<string, BekkerRef[]>> | null = null;
 // by the ⌘K palette to jump to a citation from anywhere on the site.
 export function fetchBekkerIndex(): Promise<Record<string, BekkerRef[]>> {
   if (_bekkerCache) return _bekkerCache;
+  // Throw on a bad response rather than resolving to {}: resolving would make
+  // a 404 look like an empty index, the catch below would never fire, and no
+  // citation could be jumped to for the rest of the session (the same trap
+  // fetchLsjHeads documents).
   const p = fetch(`${ROOT()}/bekker.json`)
-    .then(r => (r.ok ? r.json() : {}))
+    .then(r => {
+      if (!r.ok) throw new Error(`bekker.json: ${r.status}`);
+      return r.json();
+    })
     .then((raw: Record<string, BekkerTuple[]>) => {
       const out: Record<string, BekkerRef[]> = {};
       for (const [column, entries] of Object.entries(raw)) {
@@ -306,6 +315,9 @@ export function fetchAnalyses(work: string): Promise<Record<string, Analysis[]>>
     if (!r.ok) throw new Error(`${work} analyses: ${r.status}`);
     return r.json();
   });
+  // Evict a failure: a rejected promise left here would make every later word
+  // tap in this work rethrow it for the whole session.
+  p.catch(() => { if (_analysesCache.get(work) === p) _analysesCache.delete(work); });
   _analysesCache.set(work, p);
   return p;
 }
@@ -318,8 +330,13 @@ export interface LemmaRef { slug: string; head: string; count: number; distincti
 let _lemmataCache: Promise<Record<string, LemmaRef>> | null = null;
 export function fetchLemmata(): Promise<Record<string, LemmaRef>> {
   if (_lemmataCache) return _lemmataCache;
-  const p = fetch(`${ROOT()}/lemmata.json`).then(r => (r.ok ? r.json() : {}));
-  // A missing/failed manifest just means no lemma links — don't cache the failure.
+  const p = fetch(`${ROOT()}/lemmata.json`).then(r => {
+    if (!r.ok) throw new Error(`lemmata.json: ${r.status}`);
+    return r.json();
+  });
+  // A missing/failed manifest just means no lemma links (every caller catches)
+  // — don't cache the failure. It has to be a rejection for that to work: a
+  // {} resolved on a 404 would be cached as an empty manifest for the session.
   p.catch(() => { if (_lemmataCache === p) _lemmataCache = null; });
   _lemmataCache = p;
   return p;

@@ -13,6 +13,8 @@
 // Same host override as data.ts: the desktop app points the whole data layer
 // at an on-disk corpus via globalThis.__ARISTOTLE_DATA_ROOT__ (read lazily so
 // module-import order doesn't matter); the site never sets it.
+import { fetchBook } from './data';
+
 const DEFAULT_ROOT = `${import.meta.env.BASE_URL.replace(/\/$/, '')}/data`;
 const ROOT = () =>
   (globalThis as { __ARISTOTLE_DATA_ROOT__?: string }).__ARISTOTLE_DATA_ROOT__ ?? DEFAULT_ROOT;
@@ -64,7 +66,12 @@ export type GrammarQuery = Record<string, string>;
 
 // Greek search can match by dictionary headword ('lemma', every inflected form)
 // or by the exact surface form as written ('form').
-export type MatchMode = 'lemma' | 'form';
+// lemma: the reader typed a word; resolve it to every headword it can belong
+//   to (a typed inflection finds its dictionary entry) and search the lemma
+//   index. form: the exact inflected token. headword: the caller already holds
+//   the exact lemma keys (the picker's ticks) and wants those and nothing
+//   wider — the lemma index, without resolution.
+export type MatchMode = 'lemma' | 'form' | 'headword';
 
 // -- Per-work index loading (cached, lazy per file) -----------------------
 //
@@ -123,15 +130,20 @@ function loadBinary(work: string, file: string): Promise<ArrayBuffer> {
 }
 
 // Run `fn` over `items` with at most `limit` in flight at once (bounds the
-// concurrent-fetch burst). Rejections propagate; callers that want per-item
-// tolerance pass an `fn` that catches.
-async function pool<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+// concurrent-fetch burst that can make Safari drop requests with "Load
+// failed"). Rejections propagate; callers that want per-item tolerance pass an
+// `fn` that catches. Shared with the components — one loop, not three copies.
+export async function pool<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
   const out: R[] = new Array(items.length);
   let next = 0;
   const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
     while (next < items.length) {
       const i = next++;
-      out[i] = await fn(items[i]);
+      out[i] = await fn(items[i], i);
     }
   });
   await Promise.all(workers);
@@ -252,9 +264,27 @@ function union(a: Set<number>, b: Set<number>): Set<number> {
 // analysis lemma for 'lemma'), and wildcard terms participate via their
 // postings. Token positions count EVERY token, so an unanalysed word between
 // two terms correctly breaks adjacency.
-function phraseStarts(idx: GrkIndex, terms: string[]): Map<number, number[]> {
+//
+// Each term is a list of ALTERNATIVE keys, any of which may stand at that
+// position: a lemma search resolves a typed inflection to every headword it can
+// belong to, and a phrase typed as it stands on the page — κατὰ συμβεβηκός —
+// must find its run under whichever of those headwords the token was analysed
+// to. Taking only the first alternative found nothing for exactly the phrases
+// a reader copies off the page.
+function phraseStarts(idx: GrkIndex, terms: string[][]): Map<number, number[]> {
   const out = new Map<number, number[]>();
-  const perTerm = terms.map(t => termPositions(idx, t));
+  const perTerm = terms.map(alts => {
+    if (alts.length === 1) return termPositions(idx, alts[0]);
+    const merged = new Map<number, number[]>();
+    for (const alt of alts) {
+      for (const [si, ps] of termPositions(idx, alt)) {
+        const arr = merged.get(si);
+        if (arr) arr.push(...ps);
+        else merged.set(si, [...ps]);
+      }
+    }
+    return merged;
+  });
   const first = perTerm[0];
   if (!first) return out;
   for (const [si, firstPositions] of first) {
@@ -268,25 +298,74 @@ function phraseStarts(idx: GrkIndex, terms: string[]): Map<number, number[]> {
   return out;
 }
 
-// English phrase: do all terms appear in order in the text?
-function engPhraseMatches(text: string, terms: string[]): boolean {
+// English phrase: do all terms appear in order in the text, as whole words?
+//
+// Whole words, because the postings already guarantee every term occurs as a
+// word somewhere in the segment, so a bare substring test only ADDS false
+// positives: "the good" inside "breathe goodness". Whitespace between the
+// words, any amount; punctuation between them means the phrase is not there.
+// A typed straight apostrophe matches the text's curly one.
+export function engPhraseMatches(text: string, terms: string[]): boolean {
   if (terms.length === 0) return true;
-  const lower = text.toLowerCase();
+  const lower = text.toLowerCase().replace(/[\u2019\u02bc]/g, "'");
   // Keep the wildcards. Folding them away here would leave `hap* virtue` looking
   // for the literal string "hap virtue", so the postings would find the phrase
-  // and this check would then throw it away.
-  const parts = terms.map(t =>
-    [...t.toLowerCase().replace(/^\*+/, '')]
+  // and this check would then throw it away. A leading * asks for any start
+  // ("*ness" — happiness, goodness), so that term takes no boundary on its left.
+  const parts = terms.map(t => {
+    const raw = t.toLowerCase();
+    const body = [...raw.replace(/^\*+/, '')]
       .filter(ch => /[a-z'*?]/.test(ch))
-      .join(''));
-  if (!parts.some(p => p.includes('*') || p.includes('?'))) {
-    return lower.includes(parts.join(' '));
+      .join('');
+    return { open: raw.startsWith('*'), body };
+  });
+  if (parts.some(p => !p.body)) return false;
+  const pattern = parts
+    .map(p => {
+      const body = [...p.body].map(ch =>
+        ch === '*' ? "[a-z']*" : ch === '?' ? "[a-z']" : ch).join('');
+      return `${p.open ? '' : "(?<![a-z'])"}${body}(?![a-z'])`;
+    })
+    .join('\\s+');
+  return new RegExp(pattern).test(lower);
+}
+
+// stage6 keeps only the first 500 characters of a segment's English in
+// meta.json (`english_head`, stage6_search.py) while english.json's postings
+// cover the whole segment. A phrase check against the head alone therefore
+// drops every phrase that stands past that cut, or across it — so a head that
+// is at the cut and does not show the phrase is not evidence either way, and
+// the segment's full text settles it. The reader loads that book to render
+// the result anyway (buildGroups), so the extra fetch is only ever for a
+// candidate that then fails.
+export const ENGLISH_HEAD_LIMIT = 500;
+
+async function englishPhraseHits(
+  work: string,
+  meta: SegMeta[],
+  candidates: Set<number>,
+  engTerms: string[],
+): Promise<Set<number>> {
+  const kept = new Set<number>();
+  const byBook = new Map<number, number[]>();
+  for (const si of candidates) {
+    const head = meta[si].english_head;
+    if (engPhraseMatches(head, engTerms)) kept.add(si);
+    else if (head.length >= ENGLISH_HEAD_LIMIT) {
+      const list = byBook.get(meta[si].book);
+      if (list) list.push(si);
+      else byBook.set(meta[si].book, [si]);
+    }
   }
-  const body = parts
-    .map(p => [...p].map(ch =>
-      ch === '*' ? "[a-z']*" : ch === '?' ? "[a-z']" : ch).join(''))
-    .join(' ');
-  return new RegExp(body).test(lower);
+  if (!byBook.size) return kept;
+  await pool([...byBook], 4, async ([book, sis]) => {
+    const data = await fetchBook(work, book);
+    const texts = new Map(data.segments.map(s => [s.id, s.english?.text ?? '']));
+    for (const si of sis) {
+      if (engPhraseMatches(texts.get(meta[si].id) ?? '', engTerms)) kept.add(si);
+    }
+  });
+  return kept;
 }
 
 // -- Public search API ----------------------------------------------------
@@ -350,7 +429,7 @@ function greekPositions(
 ): Map<number, number[]> {
   const out = new Map<number, number[]>();
   if (mode === 'phrase' && terms.length > 1) {
-    for (const [si, starts] of phraseStarts(idx, terms.map(alts => alts[0]))) {
+    for (const [si, starts] of phraseStarts(idx, terms)) {
       if (!hits.has(si)) continue;
       const ps: number[] = [];
       for (const s of starts) for (let j = 0; j < terms.length; j++) ps.push(s + j);
@@ -408,11 +487,9 @@ async function searchWork(
     } else {
       grkHits = postings.reduce(intersect);
       if (grkMode === 'phrase' && grkTerms.length > 1) {
-        // A phrase needs its words in order, which resolving each word to
-        // several headwords cannot express. Match the first key of each term —
-        // for a form search that is the typed word, and for a lemma search a
-        // typed phrase is what "find this phrase in any inflection" is for.
-        grkHits = new Set(phraseStarts(grkIdx, grkTerms.map(alts => alts[0])).keys());
+        // A phrase needs its words in order; each position may hold any of
+        // the keys its term resolved to.
+        grkHits = new Set(phraseStarts(grkIdx, grkTerms).keys());
       }
     }
   }
@@ -424,9 +501,7 @@ async function searchWork(
     } else {
       engHits = postings.reduce(intersect);
       if (engMode === 'phrase' && engTerms.length > 1) {
-        engHits = new Set([...engHits].filter(si =>
-          engPhraseMatches(meta[si].english_head, engTerms)
-        ));
+        engHits = await englishPhraseHits(work, meta, engHits, engTerms);
       }
     }
   }
@@ -694,7 +769,7 @@ export async function searchPhraseVariants(
       // readings routinely land on the same token.
       const bySeg = new Map<number, Set<number>>();
       for (const reading of readings) {
-        const starts = phraseStarts(idx, reading);
+        const starts = phraseStarts(idx, reading.map(t => [t]));
         if (starts.size) productiveKeys.add(reading.join(' '));
         for (const [si, positions] of starts) {
           let seen = bySeg.get(si);
@@ -807,7 +882,7 @@ function slotHits(
   if (!idx) return out;
 
   if (slot.kind === 'phrase' && terms.length > 1) {
-    for (const [si, starts] of phraseStarts(idx, terms)) {
+    for (const [si, starts] of phraseStarts(idx, terms.map(t => [t]))) {
       for (const p of starts) out.push({ start: base[si] + p, span: terms.length, certain: true });
     }
     return out;
@@ -1029,7 +1104,15 @@ async function comboSearchWork(
 
   const base = offsets.seg_base_offset;
   const perSlot = slots.map(s => slotHits(s, base, lemmaIdx, formIdx, dict, column));
-  const slotIds = slots.map(s => JSON.stringify([s.kind, s.terms ?? null, s.query ?? null]));
+  // Two slots are the same slot when they ask the same thing, whatever order
+  // the reader ticked or typed it in: a lemma slot's heads are unioned, so
+  // their order carries nothing; a phrase is a run, so its order is the
+  // question. A grammatical query's categories are a set.
+  const slotIds = slots.map(s => JSON.stringify([
+    s.kind,
+    s.terms ? (s.kind === 'phrase' ? s.terms : [...s.terms].sort()) : null,
+    s.query ? Object.fromEntries(Object.entries(s.query).sort(([a], [b]) => a.localeCompare(b))) : null,
+  ]));
   const duplicated = new Set(slotIds.filter((id, i) => slotIds.indexOf(id) !== i));
   const windows = comboWindows(
     perSlot, opts, offsets,

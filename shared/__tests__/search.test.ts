@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { greekFold, search, searchGrammar } from '../lib/search';
+import { ENGLISH_HEAD_LIMIT, engPhraseMatches, greekFold, search, searchGrammar } from '../lib/search';
 
 const meta = [
   { id: 's1', book: 1, column: '1094a', greek_head: 'λόγος ἀρετή', english_head: 'virtue is a habit of choice' },
@@ -301,5 +301,104 @@ describe('searchGrammar', () => {
       return Promise.resolve({ ok: false, status: 404, json: async () => ({}) } as Response);
     });
     await expect(searchGrammar({ case: 'nom' }, ['TGMismatch'])).rejects.toThrow(/grammar index/);
+  });
+});
+
+describe('a phrase typed as it stands on the page, under the default lemma mode', () => {
+  beforeEach(() => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation((url) => {
+      const path = String(url);
+      if (path.endsWith('/meta.json')) return json(meta);
+      if (path.endsWith('/greek_lemma.json')) return json(greekIndex);
+      if (path.endsWith('/lemma-map/l.json')) return json({ logou: ['logos'], logos: ['logos', 'xlogos'] });
+      if (path.endsWith('/lemma-map/a.json')) return json({ areths: ['areth'] });
+      if (path.endsWith('/lemma-map/t.json')) return json({ texnh: ['texnh', 'logos'] });
+      return Promise.resolve({ ok: false, status: 404, json: async () => ({}) } as Response);
+    });
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  it('finds the run under the headwords the typed inflections belong to', async () => {
+    // logou and areths are not keys in the lemma index; the run "logos areth"
+    // stands at s1 positions 0–1. Matching only the typed fold found nothing
+    // and then told the reader the words never stand together.
+    const { results } = await search('logou areths', '', 'phrase', 'all', 'and', ['TPhraseInfl'], 'lemma');
+    expect(results.map((r) => [r.meta.id, r.grkPositions])).toEqual([['s1', [0, 1]]]);
+  });
+
+  it('under headword mode takes the keys as given and widens nothing', async () => {
+    // The lemma-map says the spelling "texnh" can also belong to logos (s1, s2).
+    // A typed word is widened; a picked headword key is exactly itself. (The
+    // lemma-map shards are cached for the module, so this uses a letter no
+    // earlier block loaded.)
+    const typed = await search('texnh', '', 'all', 'all', 'and', ['THeadTyped'], 'lemma');
+    expect(typed.results.map((r) => r.meta.id)).toEqual(['s1', 's2', 's3']);
+    const picked = await search('texnh', '', 'all', 'all', 'and', ['THeadPicked'], 'headword');
+    expect(picked.results.map((r) => r.meta.id)).toEqual(['s3']);
+  });
+});
+
+describe('engPhraseMatches', () => {
+  it.each([
+    ['the good', 'the good life', true],
+    ['the good', 'breathe goodness', false],        // substrings are not words
+    ['the good', 'to breathe good air', false],
+    ['virtue is', 'virtue is a habit', true],
+    ['virtue is', 'virtue, is it a habit', false],  // punctuation breaks the phrase
+    ['virtue is', 'virtue\n  is a habit', true],    // any whitespace joins it
+    ["aristotle's view", 'in aristotle’s view', true],
+    ['hap* virtue', 'happiness, virtue', false],
+    ['hap* virtue', 'happy virtue', true],
+    ['*ness of', 'the goodness of it', true],
+    ['go?d', 'the good life', true],
+    ['go?d', 'the gold life', true],
+    ['go?d', 'the god life', false],
+  ])('%s in %j → %s', (phrase, text, expected) => {
+    expect(engPhraseMatches(text, phrase.split(' '))).toBe(expected);
+  });
+});
+
+describe('an English phrase past the 500-character head', () => {
+  // stage6 keeps only the first 500 characters of a segment's English in
+  // meta.json; the postings cover the whole segment.
+  const filler = 'lorem ipsum '.repeat(60).slice(0, ENGLISH_HEAD_LIMIT);
+  const longMeta = [
+    { id: 'L1', book: 1, column: '1094a', greek_head: '', english_head: filler },
+    { id: 'L2', book: 1, column: '1094b', greek_head: '', english_head: 'virtue and a habit' },
+    { id: 'L3', book: 2, column: '1100a', greek_head: '', english_head: filler },
+  ];
+  const longEnglish = { virtue: [0, 1, 2], habit: [0, 1, 2] };
+  let books: string[];
+
+  beforeEach(() => {
+    books = [];
+    vi.spyOn(globalThis, 'fetch').mockImplementation((url) => {
+      const path = String(url);
+      if (path.endsWith('/meta.json')) return json(longMeta);
+      if (path.endsWith('/english.json')) return json(longEnglish);
+      if (/\/book-\d+\.json$/.test(path)) {
+        books.push(path);
+        if (path.endsWith('/book-01.json')) {
+          return json({ book: 1, segments: [
+            { id: 'L1', column: '1094a', greek: [], english: { text: `${filler} and so virtue habit is the end.` } },
+            { id: 'L2', column: '1094b', greek: [], english: { text: 'virtue and a habit' } },
+          ] });
+        }
+        return json({ book: 2, segments: [
+          { id: 'L3', column: '1100a', greek: [], english: { text: `${filler} where virtue and habit part.` } },
+        ] });
+      }
+      return Promise.resolve({ ok: false, status: 404, json: async () => ({}) } as Response);
+    });
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  it('is settled by the segment text, not dropped', async () => {
+    const { results } = await search('', 'virtue habit', 'all', 'phrase', 'and', ['TLongHead']);
+    // L1: the phrase stands past the cut → kept from the book text.
+    // L2: the head is short and lacks the phrase → dropped, no book needed.
+    // L3: at the cut, and the book text lacks the phrase → dropped.
+    expect(results.map((r) => r.meta.id)).toEqual(['L1']);
+    expect(books.map((p) => p.slice(p.lastIndexOf('/') + 1)).sort()).toEqual(['book-01.json', 'book-02.json']);
   });
 });

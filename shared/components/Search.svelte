@@ -17,6 +17,7 @@
     type SlotRelation,
     type ComboOptions,
     type WindowUnit,
+    pool,
   } from '../lib/search';
   import {
     fetchBook,
@@ -112,6 +113,10 @@
       failedWorks = outcome.failedWorks;
       totalInstances = outcome.results.reduce((n, r) => n + instCount(r), 0);
       pages = paginate(outcome.results);
+      // The widened results are other inflections by definition, so the typed
+      // accent pattern must not be held against them — kept, buildGroups would
+      // drop τῷ and τοῦ from a search typed as τὸ, the very forms this finds.
+      searchCtx = { ...searchCtx, grkAccentTerms: [] };
       searched = true;
       variantsShown = true;
       if (pages.length) await renderPage(0);
@@ -532,16 +537,6 @@
     expanded = expanded; // trigger reactivity
   }
 
-  // Run `fn` over `items` with at most `limit` in flight (bounds the concurrent
-  // fetch burst that can make Safari drop requests with "Load failed").
-  async function pool<T>(items: T[], limit: number, fn: (item: T) => Promise<void>): Promise<void> {
-    let next = 0;
-    const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
-      while (next < items.length) await fn(items[next++]);
-    });
-    await Promise.all(workers);
-  }
-
   // Beta Code reference for the "How to type Greek" chart. Keys are the same
   // letters the search index uses, so anything typed here matches directly.
   const BETA_LETTERS: { beta: string; greek: string; name: string }[] = [
@@ -885,8 +880,12 @@
         ? await searchCombo(comboSearchSlots, comboOptions, works)
         // Picked headwords are OR-ed: choosing two spellings of one word, or two
         // homonyms, asks for either, never for both in the same passage.
+        // 'headword', not 'lemma': the picks ARE the headword keys. Under
+        // 'lemma' each would be looked up as a surface again and widened to
+        // every headword that spelling can belong to — ἤν back to εἰμί and ὅς —
+        // which is exactly what the picker exists to rule out.
         : soloLemmaActive
-          ? await search(soloLemma.picked.join(' '), engQuery, 'any', engMode, langOp, works, 'lemma')
+          ? await search(soloLemma.picked.join(' '), engQuery, 'any', engMode, langOp, works, 'headword')
           : await search(grkQuery, engQuery, grkMode, engMode, langOp, works, matchMode);
       failedWorks = failed;
       approximateChapters = approximate ?? [];

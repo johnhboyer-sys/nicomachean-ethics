@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { fetchBook, fetchFootnotes, fetchLsjShard, invalidateBookCache, lookupWord, lsjShard, parseBekker, resolveBekker } from '../lib/data';
+import { fetchAnalyses, fetchBekkerIndex, fetchBook, fetchColumns, fetchFootnotes, fetchLemmata, fetchLsjShard, invalidateBookCache, lookupWord, lsjShard, parseBekker, resolveBekker } from '../lib/data';
 
 function mockFetch(map: Record<string, unknown>) {
   vi.spyOn(globalThis, 'fetch').mockImplementation((url) => {
@@ -109,5 +109,38 @@ describe('fetch and lookup helpers', () => {
     expect(result.analyses).toHaveLength(2);
     expect(result.lsj.map((e) => e.key)).toEqual(['lo/gos', '*a)rxh/']);
     await expect(fetchLsjShard('missing')).resolves.toEqual({});
+  });
+});
+
+describe('a failed fetch is not remembered', () => {
+  // Every helper evicts a rejection so the next call can retry. Two of them
+  // did not, and two more resolved {} on a 404 so the eviction never fired;
+  // either way one bad response mid-deploy pinned the failure for the session.
+  it('fetchAnalyses retries after a rejection', async () => {
+    mockFetch({});
+    await expect(fetchAnalyses('RetryWork')).rejects.toThrow('RetryWork analyses: 404');
+    mockFetch({ 'RetryWork/analyses.json': { logos: [] } });
+    await expect(fetchAnalyses('RetryWork')).resolves.toEqual({ logos: [] });
+  });
+
+  it('fetchColumns retries after a rejection', async () => {
+    mockFetch({});
+    await expect(fetchColumns('RetryWork')).rejects.toThrow('RetryWork columns: 404');
+    mockFetch({ 'RetryWork/columns.json': { '1094a': [{ book: 1, lo: 1, hi: 20 }] } });
+    await expect(fetchColumns('RetryWork')).resolves.toEqual({ '1094a': [{ book: 1, lo: 1, hi: 20 }] });
+  });
+
+  it('fetchBekkerIndex rejects on a bad response and retries, rather than caching {}', async () => {
+    mockFetch({});
+    await expect(fetchBekkerIndex()).rejects.toThrow('bekker.json: 404');
+    mockFetch({ 'bekker.json': { '1094a': [['EN', 1, 1, 20]] } });
+    await expect(fetchBekkerIndex()).resolves.toEqual({ '1094a': [{ work: 'EN', book: 1, lo: 1, hi: 20 }] });
+  });
+
+  it('fetchLemmata rejects on a bad response and retries, rather than caching {}', async () => {
+    mockFetch({});
+    await expect(fetchLemmata()).rejects.toThrow('lemmata.json: 404');
+    mockFetch({ 'lemmata.json': { 'lo/gos': { slug: 'logos', head: 'λόγος', count: 3 } } });
+    await expect(fetchLemmata()).resolves.toEqual({ 'lo/gos': { slug: 'logos', head: 'λόγος', count: 3 } });
   });
 });
