@@ -28,6 +28,66 @@
     insertSuggestion(row: number, segment: number, text: string): void;
     dismissAssist(): void;
   }
+
+  // ── document-spine addresses across a row splice (D8 §2) ────────────────
+  // Pure, so the rule can be tested without a mounted editor; used by
+  // spliceRows / reassignDocumentAddresses below.
+  import type { Address, CitationScheme } from '../citation/types';
+
+  /**
+   * Whether a document-spine work's addresses are the SOURCE's own citations
+   * ("184a.10", "205a.25,29", "1.327a") rather than the ordinals the scheme
+   * derives from row position.
+   *
+   * This is what a row splice must ask before touching them. An ordinal names
+   * a POSITION, so it has to be re-derived after every splice. A source
+   * citation names a LINE OF AN EDITION: nothing can re-derive it, and
+   * overwriting it with an ordinal drops the file's `row_refs` at the next
+   * save (lib/library/autosave.ts `sourceRowRefs` keeps them only while the
+   * addresses are not the ordinals) — and with them go the outline's chapter
+   * divisions and the export's reference stamps.
+   *
+   * Mirrors `sourceRowRefs` exactly, so the answer here and the answer the
+   * save makes can never disagree: every address must be non-empty and
+   * parseable, and at least one must differ from its ordinal.
+   */
+  export function documentAddressesAreSource(
+    scheme: CitationScheme,
+    addresses: readonly string[],
+    ordinalOf: (rowIndex: number) => string,
+  ): boolean {
+    if (addresses.length === 0) return false;
+    let differs = false;
+    for (let i = 0; i < addresses.length; i++) {
+      const raw = addresses[i];
+      if (raw === '') return false;
+      try {
+        scheme.parseAddress(raw);
+      } catch {
+        return false;
+      }
+      if (raw !== ordinalOf(i + 1)) differs = true;
+    }
+    return differs;
+  }
+
+  /**
+   * The address a row spliced in at offset `k` inherits, for a work whose
+   * addresses are the source's citations (see above): a split's two halves
+   * both carry the split line's citation — they are two pieces of one printed
+   * line — a merge keeps the first of the rows it replaced, and an insert
+   * (nothing removed) takes the address of the row it displaced, or of the row
+   * before it at the end of the document. Null only for an empty model.
+   */
+  export function inheritedSpliceAddress(
+    before: readonly Address[],
+    index: number,
+    removeCount: number,
+    k: number,
+  ): Address | null {
+    if (removeCount > 0) return before[index + Math.min(k, removeCount - 1)] ?? null;
+    return before[index] ?? before[index - 1] ?? null;
+  }
 </script>
 
 <script lang="ts">
@@ -648,6 +708,11 @@
   // stale inside the window, so commits are suppressed — every pending
   // commit is flushed BEFORE the splice, making the model canonical.
   let structuralRemount = false;
+  // Set by spliceRows from the model as it stood BEFORE the splice: true when
+  // this document's addresses are the source's own citations rather than the
+  // ordinals the scheme derives. Read by reassignDocumentAddresses, which runs
+  // inside the same synchronous splice.
+  let sourceAddressed = false;
   // Keys whose mounted view was evicted by a newer createView on the same
   // key (a keyed remount can create the new cell before the old one is
   // destroyed): the old cell's destroyView must then do nothing.
@@ -816,14 +881,25 @@
   function structSnapshotOfRow(row: RowModel): StructuralRowSnapshot {
     const offsets = row.splitOffsets;
     const para = row.englishPara ? docFromJSON(row.englishPara) : undefined;
-    return {
+    const snap: StructuralRowSnapshot = {
       greek: row.greek,
       docs: englishDocsOf(row).map((d) => docFromJSON(d)),
       ...(offsets && offsets.length > 0 ? { splitOffsets: offsets.slice() } : {}),
       ...(para && para.content.size > 0 ? { englishPara: para } : {}),
       ...(row.headingLevel ? { headingLevel: row.headingLevel } : {}),
     };
+    snapshotAddresses.set(snap, row.address);
+    return snap;
   }
+
+  /** A structural snapshot's ADDRESS. StructuralRowSnapshot deliberately
+   * carries none — a document spine's addresses are its ordinals, re-derived
+   * after every splice — but a source import's addresses are the source's own
+   * citations, which nothing can re-derive, so undo/redo has to put back
+   * exactly the address each snapshotted row had (undoing a merge otherwise
+   * gives both restored rows the first one's citation). Keyed on the snapshot
+   * object the history entry holds, so it dies with the entry. */
+  const snapshotAddresses = new WeakMap<StructuralRowSnapshot, Address>();
 
   /** RowModel from a pure RowStructure result — the address is a placeholder
    * immediately re-derived by reassignDocumentAddresses after the splice. */
@@ -848,6 +924,10 @@
       ...(s.englishPara ? { englishPara: s.englishPara.toJSON() } : {}),
     });
     if (s.headingLevel) row.headingLevel = s.headingLevel;
+    // Put back the snapshotted row's own address. Ordinals are re-derived
+    // after the splice either way; a source citation could not be.
+    const addr = snapshotAddresses.get(s);
+    if (addr) row.address = { ...addr };
     return row;
   }
 
@@ -856,6 +936,14 @@
    * else references them (spans/line_splits re-derive at save). */
   function reassignDocumentAddresses() {
     if (scheme.spineSource !== 'document') return;
+    // …unless the addresses are the SOURCE's citations rather than ordinals
+    // (a source import). Those name lines of an edition, not positions:
+    // renumbering them 1, 2, 3… loses the work's row_refs at the next save,
+    // and with them the outline's chapter divisions and the export's
+    // reference stamps. spliceRows decided this from the PRE-splice model and
+    // gave every spliced-in row its inherited address, so there is nothing
+    // left to derive here.
+    if (sourceAddressed) return;
     for (let i = 0; i < model.rows.length; i++) {
       model.rows[i].address = documentOrdinalAddress(scheme, i + 1);
     }
@@ -871,6 +959,24 @@
    */
   function spliceRows(index: number, removeCount: number, newRows: RowModel[]) {
     for (const i of [...commitTimers.keys()]) commitRowNow(i);
+    // Asked of the PRE-splice model: a spliced-in row carries a placeholder
+    // address, so after the splice the rows can no longer answer it.
+    sourceAddressed =
+      scheme.spineSource === 'document' &&
+      documentAddressesAreSource(
+        scheme,
+        model.rows.map((r) => r.address.raw),
+        (n) => documentOrdinalAddress(scheme, n).raw,
+      );
+    if (sourceAddressed) {
+      const before = model.rows.map((r) => r.address);
+      for (let k = 0; k < newRows.length; k++) {
+        // A row restored by undo/redo brought its own address back.
+        if (newRows[k].address.raw !== '') continue;
+        const inherited = inheritedSpliceAddress(before, index, removeCount, k);
+        if (inherited) newRows[k].address = { ...inherited };
+      }
+    }
     structuralRemount = true;
     model.rows.splice(index, removeCount, ...newRows);
     reassignDocumentAddresses();

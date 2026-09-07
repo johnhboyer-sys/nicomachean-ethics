@@ -18,6 +18,7 @@
     works,
     onClose,
     onOnboarded,
+    onImportSource,
   }: {
     /** Works not yet on this machine (App passes corpus-absent works). */
     works: WorkManifest[];

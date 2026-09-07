@@ -88,7 +88,16 @@
    * both fragile and a thing the user could not correct.
    */
   async function chooseDisc(corpus: Corpus) {
-    const picked = await pickDiscDir(corpus);
+    let picked: string | null;
+    try {
+      picked = await pickDiscDir(corpus);
+    } catch (err) {
+      // The native folder picker can refuse (no permission, plugin missing).
+      // Unhandled, the button simply did nothing and said nothing.
+      console.error('[import] choosing the disc folder failed', err);
+      errorMessage = messageOf(err, 'That folder could not be opened.');
+      return;
+    }
     if (picked === null) return;
     await useDisc(picked, corpus);
   }
@@ -131,16 +140,25 @@
 
   async function pickTeiFile() {
     errorMessage = null;
-    const dialog = await import('@tauri-apps/plugin-dialog');
-    const path = await dialog.open({
-      multiple: false,
-      title: 'Choose a TEI file',
-      filters: [{ name: 'TEI XML', extensions: ['xml'] }],
-    });
-    if (typeof path !== 'string') return;
-    const fs = await import('@tauri-apps/plugin-fs');
-    fileXml = await fs.readTextFile(path);
-    fileName = path.split(/[\\/]/).pop() ?? path;
+    // Every step here can reject — the picker (no permission), and the read
+    // (a file outside the app's allowed scope, or gone since it was picked).
+    // Unhandled, the rejection went to the console and the dialog just sat
+    // there still saying "Choose a TEI file first."
+    try {
+      const dialog = await import('@tauri-apps/plugin-dialog');
+      const path = await dialog.open({
+        multiple: false,
+        title: 'Choose a TEI file',
+        filters: [{ name: 'TEI XML', extensions: ['xml'] }],
+      });
+      if (typeof path !== 'string') return;
+      const fs = await import('@tauri-apps/plugin-fs');
+      fileXml = await fs.readTextFile(path);
+      fileName = path.split(/[\\/]/).pop() ?? path;
+    } catch (err) {
+      console.error('[import] reading the TEI file failed', err);
+      errorMessage = messageOf(err, 'That file could not be read.');
+    }
   }
 
   const blocked = $derived(

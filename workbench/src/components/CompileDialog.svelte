@@ -74,6 +74,7 @@
         (f) => CHAPTER_FILE_RE.test(f) && (!isDoc || f === chapterFileName(1, 1)),
       );
       const loaded: ChapterFile[] = [];
+      const skipped: string[] = [];
       for (const file of files) {
         const raw = await storage.read(work.id, file);
         if (!raw) continue;
@@ -84,9 +85,20 @@
           // chapter — skip it and note it plainly, same "degrade, don't
           // block" spirit as onboarding's chapters.json handling.
           console.error(`[compile] skipping unreadable chapter file ${file}`, err);
+          skipped.push(file);
         }
       }
       chapters = loaded;
+      // Say it in the dialog, not only the console: a chapter that can't be
+      // read is LEFT OUT of the export, and a Word file quietly missing a
+      // chapter reads as finished work. Shown before the user exports, so the
+      // choice is theirs.
+      note =
+        skipped.length === 0
+          ? null
+          : skipped.length === 1
+            ? `One chapter file couldn’t be read (${skipped[0]}) — it will be left out.`
+            : `${skipped.length} chapter files couldn’t be read — they will be left out.`;
       if (loaded.length === 0) {
         phase = 'empty';
         return;
