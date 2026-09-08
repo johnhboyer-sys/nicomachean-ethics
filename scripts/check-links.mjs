@@ -158,7 +158,12 @@ export async function checkDist(dist) {
     if (loc) {
       anchors++;
       const value = decodePath(loc[1]);
-      const match = value.match(/^([^:]+):(\d+)$/);
+      // A lettered line keeps its letter in the citation (shared/lib/data.ts
+      // lineRef), so the line part is digits plus an optional letter. Matching
+      // only `\d+` did not reject `775a:11a` — it stopped looking at it, and a
+      // check that silently declines to look reports green on a link it never
+      // verified.
+      const match = value.match(/^([^:]+):(\d+[a-z]?)$/);
       if (match) {
         const ids = await idsFor(target);
         if (!ids?.has(`L${match[1]}-${match[2]}`) && !ids?.has(`L${match[1]}-${match[2]}-c`)) {

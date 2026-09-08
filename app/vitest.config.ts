@@ -15,6 +15,14 @@ export default defineConfig({
       '@shared': fileURLToPath(new URL('../shared', import.meta.url)),
     },
   },
+  // The @shared alias above points outside this package, and shared/lib/data.ts
+  // reaches further still — through glossary.ts to `../glossary/EN.md?raw`.
+  // Vite's default fs root is app/, so that asset was denied and any test
+  // importing shared/lib/data failed to collect at all ("Denied ID …EN.md?raw")
+  // rather than failing a assertion. Allow the repo root the alias already uses.
+  server: {
+    fs: { allow: [fileURLToPath(new URL('..', import.meta.url))] },
+  },
   test: {
     environment: 'happy-dom',
     globals: true,

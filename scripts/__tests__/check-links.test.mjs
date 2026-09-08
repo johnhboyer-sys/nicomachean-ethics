@@ -130,3 +130,30 @@ test('run as a script: 0 on clean, 1 on broken, 2 on an empty dist', () => {
     for (const d of [clean, broken, empty]) rmSync(d, { recursive: true, force: true });
   }
 });
+
+// A lettered Bekker line is its own line (shared/lib/data.ts lineRef), so a
+// deep link to one spells the letter: `loc=775a:11a`. The gate has to read that
+// spelling. Matching only `\d+` did not reject such a link — it stopped
+// looking at it, so the anchor was never checked and the gate reported green
+// on a link it had not verified. GA 775a is the real case: the TLG source
+// prints 11a/11b/11c with no bare 11, so `L775a-11` does not exist.
+test('a lettered Bekker target is checked, not skipped', async () => {
+  const dist = writeFixture({
+    'EN/book/2/index.html': '<div id="col-775a"><span id="L775a-11a"></span></div>',
+    'lemma/logos/index.html':
+      `<a href="${BASE}/EN/book/2?loc=775a:11a">present</a>` +
+      `<a href="${BASE}/EN/book/2?loc=775a:11">bare, and absent from the page</a>` +
+      `<a href="${BASE}/EN/book/2?loc=775a:12c">absent</a>`,
+  });
+  try {
+    const r = await checkDist(dist);
+    const hrefs = r.broken.map((b) => b.href);
+    assert.ok(!hrefs.includes(`${BASE}/EN/book/2?loc=775a:11a`), 'the emitted lettered line resolves');
+    assert.deepEqual(hrefs, [
+      `${BASE}/EN/book/2?loc=775a:11`,
+      `${BASE}/EN/book/2?loc=775a:12c`,
+    ]);
+  } finally {
+    rmSync(dist, { recursive: true, force: true });
+  }
+});

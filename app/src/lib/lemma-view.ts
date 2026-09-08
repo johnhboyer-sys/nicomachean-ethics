@@ -4,8 +4,13 @@
 // page reads at build time is machine-local), but a wrong Bekker deep-link or a
 // bar that renders at 0% width is a real, silent regression.
 import { getWork, bookLabel, isBookless, workPath } from '@shared/lib/works';
+import { lineRef } from '@shared/lib/data';
 
-export type Instance = [col: string, line: number, surface: string];
+// The trailing `sub` is a Bekker line's letter, present only on a lettered
+// line. It is part of the line's identity, not decoration: GA 775a prints
+// 11a/11b/11c and no bare 11, so a citation that drops the letter names an
+// anchor the reader never emits.
+export type Instance = [col: string, line: number, surface: string, sub?: string];
 export interface ChapterInstances { chapter: string; bekker: string; instances: Instance[]; }
 export interface BookInstances { book: number; chapters: ChapterInstances[]; }
 export interface WorkInstances {
@@ -37,9 +42,9 @@ export const instanceHref = (
   base: string,
   work: string,
   book: number,
-  [col, line, surface]: Instance,
+  [col, line, surface, sub]: Instance,
 ): string =>
-  `${base}${workPath(work, book)}?hlg=${encodeURIComponent(surface)}&loc=${col}:${line}`;
+  `${base}${workPath(work, book)}?hlg=${encodeURIComponent(surface)}&loc=${col}:${lineRef(line, sub)}`;
 
 // Scale each work's count against the most-frequent work so the bars are
 // directly comparable at a glance. The floor of 2% keeps a single occurrence

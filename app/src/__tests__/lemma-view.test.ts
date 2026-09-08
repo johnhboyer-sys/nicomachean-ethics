@@ -37,6 +37,19 @@ describe('instanceHref', () => {
     expect(instanceHref('', 'Cat', 1, ['1a', 1, 'x'])).toBe('/Cat/book/1?hlg=x&loc=1a:1');
   });
 
+  // A lettered Bekker line is its own line (shared/lib/data.ts lineRef), and
+  // its anchor keeps the letter. GA 775a is the case that forces this: the TLG
+  // source prints 11a/11b/11c and no bare 11, so a link that cites "775a:11"
+  // points at an id the page never emits. The letter has to ride along.
+  it('keeps a lettered line’s suffix in the deep link', () => {
+    expect(instanceHref('/aristotle-reader', 'GA', 4, ['775a', 11, 'gunaixin', 'a']))
+      .toBe('/aristotle-reader/GA/book/4?hlg=gunaixin&loc=775a:11a');
+  });
+
+  it('omits the suffix when the line has none', () => {
+    expect(instanceHref('', 'GA', 4, ['775a', 12, 'x'])).toBe('/GA/book/4?hlg=x&loc=775a:12');
+  });
+
   // workPath clamps to the work's real book range, so a stale book number for a
   // now-bookless work cannot produce a 404 link.
   it('clamps an out-of-range book to one the work actually has', () => {

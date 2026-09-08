@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
-  import { fetchColumns, parseBekker, resolveBekker, type ColumnRef } from '../lib/data';
+  import { fetchColumns, lineRef, parseBekker, resolveBekker, type ColumnRef } from '../lib/data';
   import { getWork, workPath } from '../lib/works';
 
   export let work: string = 'EN';
@@ -63,7 +63,9 @@
       return;
     }
     // Same-tab navigation; the reader snaps to the nearest line if exact is absent.
-    window.location.href = `${import.meta.env.BASE_URL.replace(/\/$/, '')}${workPath(work, book)}?loc=${ref.column}:${ref.line}`;
+    // A typed "775a11a" parses its letter, so the citation must carry it too —
+    // dropping it here landed the reader on the unlettered line.
+    window.location.href = `${import.meta.env.BASE_URL.replace(/\/$/, '')}${workPath(work, book)}?loc=${ref.column}:${lineRef(ref.line, ref.sub)}`;
   }
 
   function onKey(e: KeyboardEvent) {
