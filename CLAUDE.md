@@ -8,7 +8,7 @@ Bilingual Greek/English Aristotle reading site (Astro + Svelte), deployed to Git
 - `ocr_translations/CLAUDE.md` is a self-contained OCR recipe, not project instructions.
 - **Handoffs are per track — never one shared `HANDOFF.md`.** Each carries the state of that track: what is done, what was decided and why, what failed. Read the one for the track you are working at the start of a session; rewrite it (don't append) when handing off. A new track starts a new `HANDOFF-<TRACK>.md` at the root.
 - There is deliberately no bare `HANDOFF.md`. On 2026-08-25 a Lyceum session wrote its handoff over the LSJ one through that filename, and the LSJ handoff survived only in git history. Do not recreate it.
-- Live handoffs, one per track: `HANDOFF-CATCHUP.md` (the 2026-09-07 catch-up branch — read first if that branch is unmerged) · `HANDOFF-LSJ.md` (LSJ presentation) · `workbench/SESSION-HANDOFF.md` (Workbench doc-structure tools) · `workbench-design/HANDOFF.md` (Workbench design) · `docs/print-design-handoff.md` (print/PDF layout). The names are inconsistent for historical reasons — read the one for your track, and never start a second file for a track that already has one.
+- Live handoffs, one per track: `HANDOFF-LSJ.md` (LSJ presentation) · `workbench/SESSION-HANDOFF.md` (Workbench doc-structure tools) · `workbench-design/HANDOFF.md` (Workbench design) · `docs/print-design-handoff.md` (print/PDF layout). The names are inconsistent for historical reasons — read the one for your track, and never start a second file for a track that already has one.
 - A track whose work has moved to another repo keeps its handoff there, not here.
 
 ## Build and deploy invariants
@@ -21,6 +21,13 @@ Bilingual Greek/English Aristotle reading site (Astro + Svelte), deployed to Git
 - Link-integrity gate must report 0 broken before pushing.
 
 ## Hard gotchas
+
+- **A gate that compares a thing to itself reports green forever.** Three were
+  found this way in 2026-09: the Isagoge's Busse column check compared the spine
+  against itself; `check-links.mjs` matched only `\d+` in a `loc=`, so a lettered
+  citation was *skipped* rather than failed; the alignment gate received offsets
+  already clamped and sorted. When you add a check, write the failing case
+  first, and make sure the check says so when it examined nothing.
 
 - `serde_json` must stay in `desktop/src-tauri/Cargo.toml` — signed/updater builds need it even though nothing imports it directly.
 - Run workbench vitest from `workbench/`, never from a worktree root.
