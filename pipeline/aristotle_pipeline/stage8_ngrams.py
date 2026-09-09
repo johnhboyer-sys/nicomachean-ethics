@@ -46,11 +46,11 @@ from __future__ import annotations
 
 import json
 import math
-import re
 from collections import Counter, defaultdict
 from pathlib import Path
 
 from .config import BUILD_DIR
+from .stage6_search import english_words
 
 NS = (2, 3, 4, 5)
 MIN_COUNT = 2          # corpus-wide; the whole point of a cross-work stage
@@ -62,7 +62,6 @@ GREEK_STREAMS = ("form", "lemma")
 # stage 6's fold streams) and what bounds a phrase (a segment, not a book).
 ENGLISH_STREAM = "english"
 STREAMS = (*GREEK_STREAMS, ENGLISH_STREAM)
-_ENGLISH_WORD = re.compile(r"[a-z']+")
 
 
 def _shard_letter(phrase: str) -> str:
@@ -125,7 +124,10 @@ def _english_stream(work: str) -> tuple[list[list[str]], list[int], list[dict]]:
         book = json.loads(book_path.read_text(encoding="utf-8"))
         for seg in book.get("segments", []):
             text = (seg.get("english") or {}).get("text") or ""
-            words = _ENGLISH_WORD.findall(text.lower())
+            # Split exactly as stage6 keys english.json, so a phrase found
+            # here is one the search can find (and offsets count the same
+            # words that the index does).
+            words = english_words(text)
             if not words:
                 continue
             bounds.append(len(stream))

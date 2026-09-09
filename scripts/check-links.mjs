@@ -2,8 +2,9 @@
 // Dependency-free link checker for the emitted Astro site (Node 22+).
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const BASE = '/aristotle-reader';
+export const BASE = '/aristotle-reader';
 const MAX_ID_CACHE = 6000;
 const MAX_REPORTS = 200;
 
@@ -78,12 +79,10 @@ function virtualDirectory(dist, source) {
   return path.dirname(relative) === '.' ? '' : path.dirname(relative);
 }
 
-async function main() {
-  const dist = getDist();
-  let stat;
-  try { stat = await fs.stat(dist); } catch { usage(`Dist directory does not exist: ${dist}`); }
-  if (!stat.isDirectory()) usage(`Dist path is not a directory: ${dist}`);
-
+// Crawl a built site and return the tallies plus every broken reference.
+// Pure with respect to the process: no argv, no exit — main() owns those, so
+// the gate's decisions can be tested against a fixture dist.
+export async function checkDist(dist) {
   let pages = 0;
   let links = 0;
   let anchors = 0;
@@ -130,8 +129,21 @@ async function main() {
     return null;
   }
 
-  async function checkTarget(source, raw, href, { nearestLineOk = false } = {}) {
+  async function checkTarget(source, raw, href, { nearestLineOk = false, requireBase = false } = {}) {
     const parts = splitReference(href);
+    // The site is served under BASE on GitHub Pages, so a root-relative href
+    // in emitted HTML that lacks the prefix (`/search`, `/EN/book/1`) is a
+    // 404 on live even though it resolves happily against dist/ as root.
+    // LSJ shard HTML is exempt: the pipeline cannot know the base, so shards
+    // carry base-less paths and every renderer prefixes them at render time
+    // (docs/spec-lsj-citations.md, decision 5).
+    if (requireBase && parts.pathname.startsWith('/')) {
+      const rooted = decodePath(parts.pathname);
+      if (rooted !== BASE && !rooted.startsWith(`${BASE}/`)) {
+        report(source, raw, `root-relative link lacks the site base ${BASE}`);
+        return;
+      }
+    }
     const target = await resolve(source, parts.pathname);
     if (!target) {
       report(source, raw, 'target does not exist');
@@ -146,7 +158,12 @@ async function main() {
     if (loc) {
       anchors++;
       const value = decodePath(loc[1]);
-      const match = value.match(/^([^:]+):(\d+)$/);
+      // A lettered line keeps its letter in the citation (shared/lib/data.ts
+      // lineRef), so the line part is digits plus an optional letter. Matching
+      // only `\d+` did not reject `775a:11a` — it stopped looking at it, and a
+      // check that silently declines to look reports green on a link it never
+      // verified.
+      const match = value.match(/^([^:]+):(\d+[a-z]?)$/);
       if (match) {
         const ids = await idsFor(target);
         if (!ids?.has(`L${match[1]}-${match[2]}`) && !ids?.has(`L${match[1]}-${match[2]}-c`)) {
@@ -177,7 +194,9 @@ async function main() {
     }
     if (isExternal(href) || (kind !== 'a' && /^data:/i.test(href))) return;
     links++;
-    await checkTarget(source, raw, href, { nearestLineOk });
+    // Emitted HTML always needs the site base; only the LSJ shard pass below,
+    // which calls checkTarget directly, is exempt.
+    await checkTarget(source, raw, href, { nearestLineOk, requireBase: true });
   }
 
   for await (const source of htmlFiles(dist)) {
@@ -296,6 +315,17 @@ async function main() {
     });
   }
 
+  return { pages, links, anchors, broken };
+}
+
+async function main() {
+  const dist = getDist();
+  let stat;
+  try { stat = await fs.stat(dist); } catch { usage(`Dist directory does not exist: ${dist}`); }
+  if (!stat.isDirectory()) usage(`Dist path is not a directory: ${dist}`);
+
+  const { pages, links, anchors, broken } = await checkDist(dist);
+
   // A dist with no pages (or no homepage) is a failed build, not a clean one —
   // this gate must never bless an empty directory.
   if (pages === 0) usage(`No HTML pages found under ${dist} — not a built site.`);
@@ -309,7 +339,9 @@ async function main() {
   process.exitCode = broken.length ? 1 : 0;
 }
 
-main().catch(error => {
-  console.error(`Link checker failed: ${error.stack || error}`);
-  process.exit(2);
-});
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  main().catch(error => {
+    console.error(`Link checker failed: ${error.stack || error}`);
+    process.exit(2);
+  });
+}

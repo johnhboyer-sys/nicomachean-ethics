@@ -23,8 +23,9 @@ export interface TranslationRef {
   // for whichever translation sets this.
   footnotes?: boolean;
   // Copyright-encumbered translations carried only in the local/full build.
-  // The public deploy sets PUBLIC_HIDE_PRIVATE=1 to drop them from the registry
-  // (and is built from the work's -public manifest, so their text is absent too).
+  // They are in the registry only when PUBLIC_SHOW_PRIVATE=1 (see SHOW_PRIVATE
+  // below); the public deploy forces it off (and is built from the work's
+  // -public manifest, so their text is absent too).
   private?: boolean;
 }
 
@@ -112,6 +113,7 @@ export const WORKS: Work[] = [
   {
     id: 'Cat',
     title: 'Categories',
+    greekTitle: 'Κατηγορίαι',
     abbr: 'Cat.',
     author: 'Aristotle',
     books: 1,
@@ -137,6 +139,7 @@ export const WORKS: Work[] = [
   {
     id: 'Int',
     title: 'De Interpretatione',
+    greekTitle: 'Περὶ ἑρμηνείας',
     abbr: 'Int.',
     author: 'Aristotle',
     books: 1,
@@ -182,6 +185,7 @@ export const WORKS: Work[] = [
   {
     id: 'Phys',
     title: 'Physics',
+    greekTitle: 'Φυσικὴ ἀκρόασις',
     abbr: 'Phys.',
     author: 'Aristotle',
     books: 8,
@@ -199,6 +203,7 @@ export const WORKS: Work[] = [
   {
     id: 'Cael',
     title: 'On the Heavens',
+    greekTitle: 'Περὶ οὐρανοῦ',
     abbr: 'Cael.',
     author: 'Aristotle',
     books: 4,
@@ -216,6 +221,7 @@ export const WORKS: Work[] = [
   {
     id: 'GC',
     title: 'On Generation and Corruption',
+    greekTitle: 'Περὶ γενέσεως καὶ φθορᾶς',
     abbr: 'GC',
     author: 'Aristotle',
     books: 2,
@@ -233,6 +239,7 @@ export const WORKS: Work[] = [
   {
     id: 'Mete',
     title: 'Meteorology',
+    greekTitle: 'Μετεωρολογικά',
     abbr: 'Mete.',
     author: 'Aristotle',
     books: 4,
@@ -250,6 +257,7 @@ export const WORKS: Work[] = [
   {
     id: 'DA',
     title: 'De Anima',
+    greekTitle: 'Περὶ ψυχῆς',
     abbr: 'DA',
     author: 'Aristotle',
     books: 3,
@@ -275,6 +283,7 @@ export const WORKS: Work[] = [
   {
     id: 'Sens',
     title: 'Sense and Sensibilia',
+    greekTitle: 'Περὶ αἰσθήσεως καὶ αἰσθητῶν',
     abbr: 'Sens.',
     author: 'Aristotle',
     books: 1,
@@ -292,6 +301,7 @@ export const WORKS: Work[] = [
   {
     id: 'Mem',
     title: 'On Memory',
+    greekTitle: 'Περὶ μνήμης καὶ ἀναμνήσεως',
     abbr: 'Mem.',
     author: 'Aristotle',
     books: 1,
@@ -309,6 +319,7 @@ export const WORKS: Work[] = [
   {
     id: 'Somn',
     title: 'On Sleep',
+    greekTitle: 'Περὶ ὕπνου καὶ ἐγρηγόρσεως',
     abbr: 'Somn.',
     author: 'Aristotle',
     books: 1,
@@ -326,6 +337,7 @@ export const WORKS: Work[] = [
   {
     id: 'Insomn',
     title: 'On Dreams',
+    greekTitle: 'Περὶ ἐνυπνίων',
     abbr: 'Insom.',
     author: 'Aristotle',
     books: 1,
@@ -343,6 +355,7 @@ export const WORKS: Work[] = [
   {
     id: 'DivSomn',
     title: 'On Divination in Sleep',
+    greekTitle: 'Περὶ τῆς καθ᾽ ὕπνον μαντικῆς',
     abbr: 'Div. Somn.',
     author: 'Aristotle',
     books: 1,
@@ -360,6 +373,7 @@ export const WORKS: Work[] = [
   {
     id: 'Long',
     title: 'On Length and Shortness of Life',
+    greekTitle: 'Περὶ μακροβιότητος καὶ βραχυβιότητος',
     abbr: 'Long.',
     author: 'Aristotle',
     books: 1,
@@ -377,6 +391,7 @@ export const WORKS: Work[] = [
   {
     id: 'Juv',
     title: 'On Youth, Old Age, Life and Death, and Respiration',
+    greekTitle: 'Περὶ νεότητος καὶ γήρως καὶ ζωῆς καὶ θανάτου καὶ περὶ ἀναπνοῆς',
     abbr: 'Juv.',
     author: 'Aristotle',
     books: 1,
@@ -394,6 +409,7 @@ export const WORKS: Work[] = [
   {
     id: 'HA',
     title: 'History of Animals',
+    greekTitle: 'Περὶ τὰ ζῷα ἱστορίαι',
     abbr: 'HA',
     author: 'Aristotle',
     // The TLG/Bekker text carries ten books, but Book X (on the causes of
@@ -414,6 +430,7 @@ export const WORKS: Work[] = [
   {
     id: 'PA',
     title: 'Parts of Animals',
+    greekTitle: 'Περὶ ζῴων μορίων',
     abbr: 'PA',
     author: 'Aristotle',
     books: 4,
@@ -431,6 +448,7 @@ export const WORKS: Work[] = [
   {
     id: 'MA',
     title: 'Movement of Animals',
+    greekTitle: 'Περὶ ζῴων κινήσεως',
     abbr: 'MA',
     author: 'Aristotle',
     books: 1,
@@ -448,6 +466,7 @@ export const WORKS: Work[] = [
   {
     id: 'IA',
     title: 'Progression of Animals',
+    greekTitle: 'Περὶ πορείας ζῴων',
     abbr: 'IA',
     author: 'Aristotle',
     books: 1,
@@ -465,6 +484,7 @@ export const WORKS: Work[] = [
   {
     id: 'GA',
     title: 'Generation of Animals',
+    greekTitle: 'Περὶ ζῴων γενέσεως',
     abbr: 'GA',
     author: 'Aristotle',
     books: 5,
@@ -482,6 +502,7 @@ export const WORKS: Work[] = [
   {
     id: 'Meta',
     title: 'Metaphysics',
+    greekTitle: 'Τὰ μετὰ τὰ φυσικά',
     abbr: 'Met.',
     author: 'Aristotle',
     books: 14,
@@ -504,6 +525,7 @@ export const WORKS: Work[] = [
   {
     id: 'APr',
     title: 'Prior Analytics',
+    greekTitle: 'Ἀναλυτικὰ πρότερα',
     abbr: 'APr.',
     author: 'Aristotle',
     books: 2,
@@ -522,6 +544,7 @@ export const WORKS: Work[] = [
   {
     id: 'APo',
     title: 'Posterior Analytics',
+    greekTitle: 'Ἀναλυτικὰ ὕστερα',
     abbr: 'APo.',
     author: 'Aristotle',
     books: 2,
@@ -544,6 +567,7 @@ export const WORKS: Work[] = [
   {
     id: 'Top',
     title: 'Topics',
+    greekTitle: 'Τοπικά',
     abbr: 'Top.',
     author: 'Aristotle',
     books: 8,
@@ -562,6 +586,7 @@ export const WORKS: Work[] = [
   {
     id: 'SE',
     title: 'Sophistical Refutations',
+    greekTitle: 'Περὶ σοφιστικῶν ἐλέγχων',
     abbr: 'SE',
     author: 'Aristotle',
     books: 1,
@@ -608,6 +633,7 @@ export const WORKS: Work[] = [
   {
     id: 'EE',
     title: 'Eudemian Ethics',
+    greekTitle: 'Ἠθικὰ Εὐδήμεια',
     abbr: 'EE',
     author: 'Aristotle',
     // The treatise has eight books, but IV–VI are the "common books" — they ARE
@@ -641,6 +667,7 @@ export const WORKS: Work[] = [
   {
     id: 'Pol',
     title: 'Politics',
+    greekTitle: 'Πολιτικά',
     abbr: 'Pol.',
     author: 'Aristotle',
     books: 8,
@@ -877,6 +904,7 @@ export const WORKS: Work[] = [
   {
     id: 'Rhet',
     title: 'Rhetoric',
+    greekTitle: 'Τέχνη ῥητορική',
     abbr: 'Rhet.',
     author: 'Aristotle',
     books: 3,
@@ -898,6 +926,7 @@ export const WORKS: Work[] = [
   {
     id: 'Poet',
     title: 'Poetics',
+    greekTitle: 'Περὶ ποιητικῆς',
     abbr: 'Poet.',
     author: 'Aristotle',
     books: 1,

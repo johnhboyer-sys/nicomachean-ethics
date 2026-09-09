@@ -19,6 +19,7 @@ import json
 import re
 import shutil
 import unicodedata
+from bisect import bisect_left
 from collections import defaultdict
 from pathlib import Path
 
@@ -234,19 +235,25 @@ def chapter_ranges(spine, chapters) -> dict[tuple, str]:
     '1097a15–1098b8' (crossing pages). End = one Bekker line before the next
     chapter begins; the book's last line for the final chapter of a book."""
     book_cols: dict[int, list[str]] = defaultdict(list)
-    col_min: dict[tuple, int] = {}
+    col_lines: dict[tuple, list[int]] = {}
     col_max: dict[tuple, int] = {}
     for seg in spine["segments"]:
         b, c = seg["book"], seg["column"]
         if c not in book_cols[b]:
             book_cols[b].append(c)
-        ns = [l["n"] for l in seg["lines"]]
-        col_min[(b, c)], col_max[(b, c)] = min(ns), max(ns)
+        ns = sorted({l["n"] for l in seg["lines"]})
+        col_lines[(b, c)], col_max[(b, c)] = ns, ns[-1]
 
     def step_back(book, col, line):
-        """The Bekker position one line before (col, line) within this book."""
-        if line > col_min[(book, col)]:
-            return col, line - 1
+        """The Bekker position one line before (col, line) within this book —
+        the last line the column actually carries before it, not line - 1: an
+        edition can skip a number (PA 689a prints 13-14 as one line, so there
+        is no 14), and a span ending on a line that does not exist is a
+        dangling anchor the reader cannot resolve."""
+        ns = col_lines[(book, col)]
+        i = bisect_left(ns, line)
+        if i > 0:
+            return col, ns[i - 1]
         cols = book_cols[book]
         i = cols.index(col)
         if i > 0:

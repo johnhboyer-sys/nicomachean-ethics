@@ -1,6 +1,8 @@
 # Spec: text-quality gate (feature 8)
 
-*Status: ready to implement. Parent: `corpus-analysis-features.md` §8. No TLG
+*Status: shipped — PR #82 (merge `6072cc4`, commit `a2ed465`, report-only) and
+armed in PR #85 (merge `d781745`, commit `904e36d`, `HARD_GATE = True` in
+`quality.py`), both 2026-08-18. Parent: `corpus-analysis-features.md` §8. No TLG
 licence question — the gate ships nothing; it guards the build.*
 
 ## Goal

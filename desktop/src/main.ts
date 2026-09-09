@@ -17,7 +17,10 @@ import App from './App.svelte';
 const info = await initDataLayer();
 // Imported translations must be registered before the Reader mounts — it
 // resolves its translation list once, at component init.
-await loadImports().catch(() => 0);
+await loadImports().catch((e: unknown) => {
+  console.error('Imported translations could not be loaded:', e);
+  return 0;
+});
 
 mount(App, {
   target: document.getElementById('app')!,

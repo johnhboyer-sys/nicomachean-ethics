@@ -3,6 +3,7 @@
   import {
     decodeOffsets,
     fetchEnglishSegments,
+    lineRef,
     fetchNgramOccurrences,
     fetchNgramShard,
     fetchSearchOffsets,
@@ -16,6 +17,7 @@
     lemmaOptions,
     lemmaReadings,
     offsetRef,
+    pool,
     type Offsets,
   } from '../lib/search';
   import { WORKS, getWork, workPath } from '../lib/works';
@@ -44,7 +46,9 @@
     column: string;
     // null for English: the translation is aligned per segment, so the
     // citation is the column and there is no line to name.
-    line: number | null;
+    // A string, not a number: a lettered line is cited as "5a" (244b5a is its
+    // own line beside 244b5). Null on a column-level citation.
+    line: string | null;
     book: number;
     href: string;
   }
@@ -506,18 +510,6 @@
     return promise;
   }
 
-  // Bound the offsets burst: a common phrase can span most of the corpus.
-  async function pool<T>(items: T[], limit: number, fn: (item: T, index: number) => Promise<void>) {
-    let next = 0;
-    const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
-      while (next < items.length) {
-        const index = next++;
-        await fn(items[index], index);
-      }
-    });
-    await Promise.all(workers);
-  }
-
   async function loadPhraseDetails(id: string, item: PhraseItem) {
     details = { ...details, [id]: { loading: true, error: '', works: [] } };
     try {
@@ -575,9 +567,12 @@
               .slice(0, CITATION_CAP)
               .map((ref) => ({
                 column: ref.column,
-                line: ref.line,
+                // The line as it is cited: 244b5a is not 244b5 (offsets.json
+                // carries the suffix since 2026-09-07; an older build has none
+                // and cites the bare number, as it always did).
+                line: lineRef(ref.line, ref.sub),
                 book: ref.book,
-                href: `${BASE_URL}${workPath(work, ref.book)}?loc=${ref.column}:${ref.line}`,
+                href: `${BASE_URL}${workPath(work, ref.book)}?loc=${ref.column}:${lineRef(ref.line, ref.sub)}`,
               }));
           }
           groups[index] = { ...groups[index], citations };

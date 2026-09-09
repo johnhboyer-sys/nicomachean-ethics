@@ -129,26 +129,36 @@ function findMarkerRuns(text: string): MarkerRun[] {
 
 /**
  * Pair adjacent same-marker runs within one paragraph (markers never pair
- * across a blank-line break — normalizeParagraphBreaks/scanTags's own
- * paragraph model treats each side of a break as a separate unit, and a
- * genuine emphasis span is never written spanning one). Unpaired runs
- * (odd count in a paragraph) become strays. `_` and `*` pair independently
- * of each other (a `_..._` isn't closed by a stray `*`).
+ * across a paragraph break — a genuine emphasis span is never written
+ * spanning one). Unpaired runs (odd count in a paragraph) become strays.
+ * `_` and `*` pair independently of each other (a `_..._` isn't closed by a
+ * stray `*`).
+ *
+ * The text this sees has ALREADY been through normalizeParagraphBreaks
+ * (translation-file.ts runs it before scanEmphasis, and emphasisScanInput
+ * hands ImportDialog the same text), so every `\n` is a paragraph break.
+ * Looking for a blank-line run here instead found none and let a stray `_`
+ * at the end of one paragraph close against a stray at the start of the
+ * next — a confident "emphasis span" across the break.
  */
 function pairMarkers(text: string): { matches: RawMatch[]; strays: { index: number; end: number; style: EmphasisStyle }[] } {
   const matches: RawMatch[] = [];
   const strays: { index: number; end: number; style: EmphasisStyle }[] = [];
 
-  // Paragraph boundaries: same blank-line-run definition as translation-file's
-  // normalizeParagraphBreaks (BLANK_RUN), so pairing never crosses what will
-  // become a paragraph break in the clean text.
-  const paraBreak = /\n\s*\n/g;
-  const paraStarts = [0, ...[...text.matchAll(paraBreak)].map(m => m.index! + m[0].length)];
+  const paraStarts = [0, ...[...text.matchAll(/\n/g)].map(m => m.index! + 1)];
   const paraEnds = [...paraStarts.slice(1).map((_, i) => paraStarts[i + 1]), text.length];
 
+  // One scan of the whole text; runs never straddle a `\n`, so a forward
+  // cursor partitions them by paragraph.
+  const allRuns = findMarkerRuns(text);
+  let ri = 0;
   for (let pi = 0; pi < paraStarts.length; pi++) {
     const pStart = paraStarts[pi], pEnd = paraEnds[pi];
-    const runs = findMarkerRuns(text).filter(r => r.index >= pStart && r.end <= pEnd);
+    const runs: MarkerRun[] = [];
+    while (ri < allRuns.length && allRuns[ri].end <= pEnd) {
+      if (allRuns[ri].index >= pStart) runs.push(allRuns[ri]);
+      ri += 1;
+    }
     const pending: Record<'**' | '_' | '*', MarkerRun | null> = { '**': null, '_': null, '*': null };
     for (const run of runs) {
       const open = pending[run.marker];

@@ -15,9 +15,10 @@
 import { fetchBook, fetchChapters, type BookData, type ChapterRef, type OverlayPiece } from '@shared/lib/data';
 import type { TranslationRef } from '@shared/lib/works';
 import { getWork } from '@shared/lib/works';
-import { isTauri } from './runtime';
+import { isTauri, errorText, atomicWriteText } from './runtime';
+import { memoAsync } from '@shared/lib/memo';
 import {
-  parseTranslationFile, serializeFrontmatter, splitChapters, slugId, composeCitation, auditChapterKeys,
+  parseTranslationFile, serializeFrontmatter, splitChapters, splitFrontmatter, slugId, composeCitation, auditChapterKeys,
   type ParsedTranslation, type TranslationMeta, type FootnoteScope,
 } from './translation-file';
 import { buildChapterInputs } from './aligner/reference';
@@ -95,29 +96,41 @@ export interface ImportSummary {
 // ── storage backends ─────────────────────────────────────────────────────────
 
 interface Store {
-  list(): Promise<{ work: string; id: string }[]>;
-  readMap(work: string, id: string): Promise<ImportRecord | null>;
+  /** Every stored record; `problems` names the places it could not list. */
+  list(): Promise<{ records: { work: string; id: string }[]; problems: string[] }>;
+  /** Throws when the record is missing or unreadable — the caller decides how to say so. */
+  readMap(work: string, id: string): Promise<ImportRecord>;
   write(work: string, id: string, content: string, original: string, record: ImportRecord): Promise<void>;
   exists(work: string, id: string): Promise<boolean>;
 }
 
 const LS_PREFIX = 'import-map:';
 
+function parseRecord(raw: string, where: string): ImportRecord {
+  const rec = JSON.parse(raw) as ImportRecord;
+  if (!rec || typeof rec !== 'object' || typeof rec.meta?.id !== 'string' || !rec.overlaysByBook) {
+    throw new Error(`${where} is not an import record`);
+  }
+  return rec;
+}
+
 const browserStore: Store = {
   async list() {
-    const out: { work: string; id: string }[] = [];
+    const records: { work: string; id: string }[] = [];
     for (let i = 0; i < localStorage.length; i++) {
       const k = localStorage.key(i)!;
       if (k.startsWith(LS_PREFIX)) {
         const [work, id] = k.slice(LS_PREFIX.length).split('/');
-        out.push({ work, id });
+        records.push({ work, id });
       }
     }
-    return out;
+    return { records, problems: [] };
   },
   async readMap(work, id) {
-    const raw = localStorage.getItem(`${LS_PREFIX}${work}/${id}`);
-    return raw ? JSON.parse(raw) : null;
+    const key = `${LS_PREFIX}${work}/${id}`;
+    const raw = localStorage.getItem(key);
+    if (raw === null) throw new Error(`${key} is missing`);
+    return parseRecord(raw, key);
   },
   async write(work, id, _content, _original, record) {
     // Browser harness keeps only the map (localStorage is too small for full
@@ -136,31 +149,43 @@ async function tauriStore(): Promise<Store> {
   const dirOf = (work: string) => join(root, work);
   return {
     async list() {
-      const out: { work: string; id: string }[] = [];
-      if (!(await fs.exists(root))) return out;
+      const records: { work: string; id: string }[] = [];
+      const problems: string[] = [];
+      if (!(await fs.exists(root))) return { records, problems };
       for (const workDir of await fs.readDir(root)) {
         if (!workDir.isDirectory) continue;
-        const entries = await fs.readDir(await join(root, workDir.name));
+        let entries: Awaited<ReturnType<typeof fs.readDir>>;
+        try {
+          entries = await fs.readDir(await join(root, workDir.name));
+        } catch (e) {
+          problems.push(`The imported translations under translations/${workDir.name}/ could not be listed (${errorText(e)}) and are not in the picker; the files are untouched.`);
+          continue;
+        }
         for (const e of entries) {
           if (e.name.endsWith('.map.json')) {
-            out.push({ work: workDir.name, id: e.name.replace(/\.map\.json$/, '') });
+            records.push({ work: workDir.name, id: e.name.replace(/\.map\.json$/, '') });
           }
         }
       }
-      return out;
+      return { records, problems };
     },
     async readMap(work, id) {
-      try {
-        const p = await join(await dirOf(work), `${id}.map.json`);
-        return JSON.parse(await fs.readTextFile(p));
-      } catch { return null; }
+      const p = await join(await dirOf(work), `${id}.map.json`);
+      return parseRecord(await fs.readTextFile(p), p);
     },
+    // Write-then-rename (atomicWriteText), the map last — `list()` keys on
+    // `.map.json`, so a crash mid-write leaves stray `.tmp` files, never a
+    // registered translation whose text or map is truncated.
     async write(work, id, content, original, record) {
       const dir = await dirOf(work);
       await fs.mkdir(dir, { recursive: true });
-      await fs.writeTextFile(await join(dir, `${id}.md`), content);
-      await fs.writeTextFile(await join(dir, `${id}.original`), original);
-      await fs.writeTextFile(await join(dir, `${id}.map.json`), JSON.stringify(record));
+      for (const [name, body] of [
+        [`${id}.md`, content],
+        [`${id}.original`, original],
+        [`${id}.map.json`, JSON.stringify(record)],
+      ] as const) {
+        await atomicWriteText(fs, await join(dir, name), body);
+      }
     },
     async exists(work, id) {
       return fs.exists(await join(await dirOf(work), `${id}.map.json`));
@@ -168,11 +193,9 @@ async function tauriStore(): Promise<Store> {
   };
 }
 
-let _store: Promise<Store> | null = null;
-function store(): Promise<Store> {
-  if (!_store) _store = isTauri() ? tauriStore() : Promise.resolve(browserStore);
-  return _store;
-}
+// A failed handle (app-data dir not resolvable yet) must not be the cached
+// answer for the rest of the session — memoAsync() retries on the next call.
+const store = memoAsync<Store>(() => (isTauri() ? tauriStore() : Promise.resolve(browserStore)));
 
 // ── runtime registration ─────────────────────────────────────────────────────
 
@@ -299,12 +322,34 @@ function installHooks(): void {
   g.__ARISTOTLE_IMPORT_NOTE_RENDER__ = (work, id) => registered.get(`${work}/${id}`)?.noteRender ?? null;
 }
 
+const loadProblems: string[] = [];
+
+/**
+ * One plain sentence per stored translation the last loadImports() could not
+ * read (a truncated or hand-edited map.json, an unlistable work directory).
+ * The record is skipped — never deleted, never overwritten — and the app
+ * shows these at startup rather than letting a translation vanish from the
+ * picker with no explanation.
+ */
+export function importLoadProblems(): string[] {
+  return [...loadProblems];
+}
+
 /** Load every stored import and register it — call once at startup, before mount. */
 export async function loadImports(): Promise<number> {
+  loadProblems.length = 0;
   const s = await store();
-  for (const { work, id } of await s.list()) {
-    const rec = await s.readMap(work, id);
-    if (rec) registered.set(`${work}/${id}`, rec);
+  const { records, problems } = await s.list();
+  loadProblems.push(...problems);
+  for (const { work, id } of records) {
+    try {
+      registered.set(`${work}/${id}`, await s.readMap(work, id));
+    } catch (e) {
+      loadProblems.push(
+        `The imported translation ${work}/${id} could not be read (${errorText(e)}) and is not in the picker; `
+        + `its files are untouched (translations/${work}/${id}.map.json).`,
+      );
+    }
   }
   installHooks();
   return registered.size;
@@ -521,7 +566,7 @@ export async function runImport(
     work: req.work,
     translator: req.translator,
     license: req.license,
-    ...(req.year !== undefined ? { year: req.year } : {}),
+    ...(req.year !== undefined ? { year: req.year } : (parsed.meta.year !== undefined ? { year: parsed.meta.year } : {})),
     ...(req.source ? { source: req.source } : (parsed.meta.source ? { source: parsed.meta.source } : {})),
     language: parsed.meta.language ?? 'en',
     id: req.idOverride ?? parsed.meta.id ?? slugId(req.translator, req.work),
@@ -577,7 +622,14 @@ export async function runImport(
   const emphasisByBook: Record<string, Record<string, PieceEmphasis[]>> = {};
   for (const b of books) {
     onProgress(`Aligning Book ${b} of ${workMeta.books}…`);
-    const bookData = await fetchBook(req.work, b);
+    let bookData: BookData;
+    try {
+      bookData = await fetchBook(req.work, b);
+    } catch (e) {
+      throw new Error(
+        `Could not load Book ${b} of ${workMeta.title} from the corpus (${errorText(e)}). Nothing was imported.`,
+      );
+    }
     const prose = new Map(
       chapters.filter(c => c.book === b).map(c => [`${c.book}:${c.chapter}`, c.text]),
     );
@@ -619,10 +671,20 @@ export async function runImport(
     ...(waivedDivisionGaps ? { waivedDivisionGaps } : {}),
     ...(req.titles ? { titles: req.titles } : {}),
   };
-  const canonical = parsed.hasFrontmatter
-    ? req.raw
-    : serializeFrontmatter(meta) + req.raw;
-  await s.write(req.work, meta.id, canonical, originalForStorage(req), record);
+  // The canonical file carries the metadata this import actually used — the
+  // form's translator/license, a "keep both" id override — never the header
+  // the upload happened to arrive with: that header could name another id
+  // than the file it is stored under, and a re-import of the exported file
+  // would then collide with or masquerade as the original.
+  const canonical = serializeFrontmatter(meta) + splitFrontmatter(req.raw).body;
+  try {
+    await s.write(req.work, meta.id, canonical, originalForStorage(req), record);
+  } catch (e) {
+    throw new Error(
+      `Could not write the library files for “${meta.id}” (${errorText(e)}). Nothing was imported`
+      + (already ? '; the previous copy may be partly replaced — import it again to repair it.' : '.'),
+    );
+  }
   registered.set(`${req.work}/${meta.id}`, record);
   installHooks();
 

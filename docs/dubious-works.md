@@ -63,10 +63,26 @@ translation per work. The Greek is largely cached already.
 
 ## Candidate inventory
 
-**Done:** Oeconomica (`Oec`, spurious).
+**Done:** Oeconomica (`Oec`, spurious) — PR #21, deployed 2026-07-08 (`DEPLOY-STATUS.md`).
+
+**Also shipped (verified 2026-09-07):** the next ten went out together as **PR #27**
+(`claude/dubious-spuria`, merged 2026-07-09, deployed the same day — `DEPLOY-STATUS.md`
+2026-07-09 entry; GitHub PR #27): De Virtutibus et Vitiis (`VV`, Solomon 1915), De Mundo
+(`DM`, Forster 1914), Mechanica (`Mech`, Forster 1913), De Coloribus (`Col`),
+Physiognomonica (`Phgn`), De Melisso Xenophane Gorgia (`MXG`) [Loveday & Forster 1913],
+De Audibilibus (`Aud`), De Lineis Insecabilibus (`Lin`, Joachim 1908), Ventorum Situs
+(`Vent`, Forster 1913), De Mirabilibus Auscultationibus (`Mirab`, Dowdall 1909). Each has
+`manifests/<Id>.yaml` with `authenticity: spurious` and a `shared/lib/works.ts` entry —
+11 spurious works in the registry, grouped under "Spurious Works" on the home page (PR #28,
+same deploy). NB `git log --oneline -- manifests/<Id>.yaml` cannot reach these commits:
+this clone is shallow and every one of these manifests bottoms out at the boundary
+`040423e` (2026-07-27), so the PR numbers above come from `DEPLOY-STATUS.md` and GitHub,
+not from git history.
 
 **Greek cached in the Diogenes/TLG export (`build/export/.../tlg0086NNN.xml`), need PD
-English:** De Virtutibus et Vitiis (tlg045), Magna Moralia, De Mundo, Mechanica,
+English** (as of 2026-09-07 only Magna Moralia, Problemata and De Spiritu remain unbuilt —
+De Spiritu's Dobson translation is US-PD 2027-01-01 per PR #27 / `DEPLOY-STATUS.md`
+2026-07-09; the rest of this list shipped in PR #27 above): De Virtutibus et Vitiis (tlg045), Magna Moralia, De Mundo, Mechanica,
 Problemata, De Coloribus, De Audibilibus, Physiognomonica, De Mirabilibus
 Auscultationibus, De Lineis Insecabilibus, De Ventorum Situ, De Melisso Xenophane
 Gorgia, De Spiritu. (Confirm each `tlg_work` id + Bekker range from the Perseus/TLG

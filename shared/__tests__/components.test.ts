@@ -62,6 +62,8 @@ vi.mock('../lib/data', async (importOriginal) => {
       '1': [{ chapter: '1', column: '1094a', line: '1', bekker: '1094a' }],
     })),
     fetchQuotations: vi.fn(async () => []),
+    fetchFigures: vi.fn(async () => ({})),
+    fetchSidenotes: vi.fn(async () => ({})),
   };
 });
 
@@ -109,6 +111,31 @@ describe('Reader.svelte', () => {
     // over a phrase containing a parenthesis metacharacter without throwing).
     const main = screen.getByRole('main');
     expect(within(main).getAllByText(/virtue/i).length).toBeGreaterThan(0);
+  });
+
+  it('gives a lettered line its own anchor and prints its number', async () => {
+    // Bekker's 244b carries a line 5 and then a line 5a. Sharing one id made
+    // getElementById return whichever came first, so a citation of the second
+    // landed on the first; and the gutter, which prints only multiples of five,
+    // left the lettered line unlabelled beside a 5 that was not it.
+    const book: BookData = structuredClone(fixtureBook);
+    book.segments[0].column = '244b';
+    book.segments[0].greek = [
+      { n: 5, text: 'πρῶτον', tokens: [{ t: 'πρῶτον', o: 0, k: 'prwton' }] },
+      { n: 5, sub: 'a', text: 'ὑπόκειται', tokens: [{ t: 'ὑπόκειται', o: 0, k: 'upokeitai' }] },
+    ];
+    window.history.replaceState(null, '', '/Phys/book/7?loc=244b:5a');
+
+    const { container } = render(Reader, { props: { work: 'Phys', bookNum: 7, bookData: book } });
+    await screen.findByText('244b');
+
+    expect(container.querySelector('#L244b-5')).not.toBeNull();
+    const lettered = container.querySelector('#L244b-5a');
+    expect(lettered).not.toBeNull();
+    expect(lettered!.querySelector('.line-num')?.textContent).toBe('5a');
+    // ?loc=244b:5a tints the lettered line, not the bare 5 above it.
+    expect(lettered!.classList.contains('target')).toBe(true);
+    expect(container.querySelector('#L244b-5')!.classList.contains('target')).toBe(false);
   });
 
   it('renders sidecar English paragraph markers as paragraph breaks', async () => {
@@ -183,6 +210,62 @@ describe('Reader.svelte', () => {
     await screen.findByText(/again/);
     expect(container.querySelectorAll('em')).toHaveLength(0);
     expect(container.querySelectorAll('.fn-marker')).toHaveLength(2);
+  });
+
+  it('snaps ?loc= to the nearest Greek line when the cited line is not a line start', async () => {
+    // LSJ cites its own editions' lineation, off by a line or two from ours
+    // (docs/spec-lsj-citations.md decision 8), and the link gate lets those
+    // through on the strength of this fallback: the column must exist, the
+    // exact line need not.
+    window.history.replaceState(null, '', '/EN/book/1?loc=1094a:3');
+    const book: BookData = structuredClone(fixtureBook);
+    book.segments[0].greek = [
+      { n: 1, text: 'λόγος', tokens: [{ t: 'λόγος', o: 0, k: 'logos' }] },
+      { n: 4, text: 'ἀρετή', tokens: [{ t: 'ἀρετή', o: 0, k: 'areth' }] },
+      { n: 9, text: 'φύσις', tokens: [{ t: 'φύσις', o: 0, k: 'fusis' }] },
+    ];
+    const { container } = render(Reader, { props: { work: 'EN', bookNum: 1, bookData: book } });
+    await screen.findByText('1094a');
+    await vi.waitFor(() => expect(container.querySelector('.greek-line.target')).not.toBeNull());
+    expect(container.querySelector('.greek-line.target')!.id).toBe('L1094a-4');
+    expect(Element.prototype.scrollIntoView).toHaveBeenCalled();
+  });
+
+  it('opens an exact ?loc= line without snapping', async () => {
+    window.history.replaceState(null, '', '/EN/book/1?loc=1094a:9');
+    const book: BookData = structuredClone(fixtureBook);
+    book.segments[0].greek = [
+      { n: 1, text: 'λόγος', tokens: [{ t: 'λόγος', o: 0, k: 'logos' }] },
+      { n: 9, text: 'φύσις', tokens: [{ t: 'φύσις', o: 0, k: 'fusis' }] },
+    ];
+    const { container } = render(Reader, { props: { work: 'EN', bookNum: 1, bookData: book } });
+    await screen.findByText('1094a');
+    await vi.waitFor(() => expect(container.querySelector('.greek-line.target')).not.toBeNull());
+    expect(container.querySelector('.greek-line.target')!.id).toBe('L1094a-9');
+  });
+
+  it('sanitizes an inline figure before injecting it', async () => {
+    // figures.json is corpus HTML like a footnote, and it went in raw.
+    const { fetchFigures } = await import('../lib/data');
+    vi.mocked(fetchFigures).mockResolvedValueOnce({
+      '2': '<figure class="diagram"><figcaption>Tree</figcaption><img src=x onerror="alert(1)">'
+        + '<script>alert(2)</script><div class="pt">Substance</div></figure>',
+    });
+    window.history.replaceState(null, '', '/Isa/book/1');
+    const book: BookData = structuredClone(fixtureBook);
+    book.segments[0].english = {
+      text: 'Alpha [[fig2]] gamma.',
+      notes: [],
+      markers: [],
+      bekker: [{ n: 1, offset: 0, real: true }],
+    };
+    const { container } = render(Reader, { props: { work: 'Isa', bookNum: 1, bookData: book } });
+    await screen.findByText(/Alpha/);
+    await vi.waitFor(() => expect(container.querySelector('figure.diagram')).not.toBeNull());
+    expect(container.querySelector('figure.diagram .pt')!.textContent).toBe('Substance');
+    expect(container.querySelector('figure img')).toBeNull();
+    expect(container.querySelector('figure script')).toBeNull();
+    expect(container.innerHTML).not.toContain('onerror');
   });
 
   it('keeps existing sidenote and figure inline markers out of rendered prose', async () => {

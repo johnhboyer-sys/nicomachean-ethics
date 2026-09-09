@@ -5,15 +5,19 @@
   // the Bonitz section stubbed exactly as on the site (digitisation pending —
   // the stub is honest, not filler). Citation chips jump into the reader via
   // the same ?hlg=&loc= contract the site's search uses.
-  import { fetchLsjShard, lsjShard } from '@shared/lib/data';
+  import { fetchLsjShard, lsjShard, lineRef } from '@shared/lib/data';
   import { renderLsjEntry } from '@shared/lib/html';
   import { getWork, bookLabel, isBookless } from '@shared/lib/works';
 
   export let slug: string;
-  export let onJumpTo: (work: string, book: number, column: string, line: number, surface: string) => void;
+  export let onJumpTo: (work: string, book: number, column: string, line: number, surface: string, sub?: string) => void;
   export let onBack: () => void;
 
-  type Instance = [col: string, line: number, surface: string];
+  // The trailing sub is a lettered Bekker line's letter, written by
+  // app/scripts/build-lemmata.mjs and present only on a lettered line. Reading
+  // this tuple as three elements dropped it, so a chip for GA 775a11a printed
+  // "775a11" and jumped to a line the reader does not emit.
+  type Instance = [col: string, line: number, surface: string, sub?: string];
   interface ChapterInstances { chapter: string; bekker: string; instances: Instance[]; }
   interface BookInstances { book: number; chapters: ChapterInstances[]; }
   interface WorkInstances { work: string; title: string; count: number; shown: number; books: BookInstances[]; }
@@ -135,7 +139,7 @@
                         </div>
                         <ul class="fb-citelist">
                           {#each ch.instances as inst}
-                            <li><button on:click={() => onJumpTo(w.work, bk.book, inst[0], inst[1], inst[2])}>{inst[0]}{inst[1]}</button></li>
+                            <li><button on:click={() => onJumpTo(w.work, bk.book, inst[0], inst[1], inst[2], inst[3])}>{inst[0]}{lineRef(inst[1], inst[3])}</button></li>
                           {/each}
                         </ul>
                       </div>
@@ -157,7 +161,7 @@
                           </div>
                           <ul class="fb-citelist">
                             {#each ch.instances as inst}
-                              <li><button on:click={() => onJumpTo(w.work, bk.book, inst[0], inst[1], inst[2])}>{inst[0]}{inst[1]}</button></li>
+                              <li><button on:click={() => onJumpTo(w.work, bk.book, inst[0], inst[1], inst[2], inst[3])}>{inst[0]}{lineRef(inst[1], inst[3])}</button></li>
                             {/each}
                           </ul>
                         </div>

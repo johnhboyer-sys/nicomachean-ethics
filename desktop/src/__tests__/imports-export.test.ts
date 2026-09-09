@@ -217,6 +217,32 @@ describe('imports', () => {
     const overrideRecord = JSON.parse(localStorage.getItem('import-map:ethics/override-page-notes-ethics')!);
     expect(overrideRecord.noteRender).toBeUndefined();
   });
+  it('says which book could not be loaded, in one sentence, and imports nothing', async () => {
+    const { runImport } = await import('../lib/imports');
+    mocks.fetchBook.mockRejectedValue(new TypeError('Failed to fetch'));
+    await expect(runImport({
+      raw: '{1.1}Happiness.',
+      work: 'ethics',
+      translator: 'Offline Copy',
+      license: 'user-supplied',
+    })).rejects.toThrow(/Could not load Book 1 of Synthetic Ethics.*Failed to fetch.*Nothing was imported/);
+    expect(localStorage.getItem('import-map:ethics/offline-copy-ethics')).toBeNull();
+  });
+
+  it('loadImports registers what it can read and reports the record it could not', async () => {
+    const { loadImports, importLoadProblems } = await import('../lib/imports');
+    localStorage.setItem('import-map:ethics/bad', '{"meta": {"id": "bad"');
+    localStorage.setItem('import-map:ethics/good', JSON.stringify({
+      meta: { formatVersion: 1, work: 'ethics', translator: 'Good', license: 'user-supplied', language: 'en', id: 'good' },
+      density: 'chapter-only', warnings: [], stats: { tagged: 0, placed: 0, interpolated: 0, chapters: 1 },
+      overlaysByBook: {}, alignment: {},
+    }));
+    await expect(loadImports()).resolves.toBeGreaterThanOrEqual(1);
+    expect(importLoadProblems()).toEqual([expect.stringMatching(/ethics\/bad.*could not be read/i)]);
+    const g = globalThis as { __ARISTOTLE_EXTRA_TRANSLATIONS__?: Record<string, { id: string }[]> };
+    expect(g.__ARISTOTLE_EXTRA_TRANSLATIONS__?.ethics.map(t => t.id)).toContain('good');
+    expect(g.__ARISTOTLE_EXTRA_TRANSLATIONS__?.ethics.map(t => t.id)).not.toContain('bad');
+  });
 });
 
 describe('exportLibrary', () => {

@@ -11,18 +11,17 @@ import { readFileSync } from 'node:fs';
 import ThemeInit from './ThemeInit.astro';
 import Pwa from './Pwa.astro';
 import ThemeToggle from './ThemeToggle.astro';
-import { getWork, workPath, workLanding, bookLabel, isBookless } from '@shared/lib/works';
+import { workLanding } from '@shared/lib/works';
 import { jsonLdSafe } from '../lib/jsonld';
+import { buildWorksView, instanceHref, instanceLabel, type Instance, type WorkInstances } from '../lib/lemma-view';
 import '@shared/styles/global.css';
 
 interface Props { slug: string; }
 const { slug } = Astro.props as Props;
 const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 
-type Instance = [col: string, line: number, surface: string];
-interface ChapterInstances { chapter: string; bekker: string; instances: Instance[]; }
-interface BookInstances { book: number; chapters: ChapterInstances[]; }
-interface WorkInstances { work: string; title: string; count: number; shown: number; books: BookInstances[]; }
+// The instance/chapter/book/work shapes are declared with the view builder in
+// ../lib/lemma-view.
 interface Distinctiveness {
   in_aristotle: number;
   before_aristotle: number;
@@ -50,35 +49,15 @@ const data: LemmaData = JSON.parse(
 // desktop app is offline-first and still renders the local shards. The LSJ key
 // is the same beta-code key the concordance attributed the lemma to.
 
-// Deep-link an instance back into the reader: scroll to the Bekker line and
-// highlight the Greek word (the same ?hlg=&loc= mechanism search uses).
-const instHref = (work: string, book: number, [col, line, surface]: Instance) =>
-  `${base}${workPath(work, book)}?hlg=${encodeURIComponent(surface)}&loc=${col}:${line}`;
+// Deep-link an instance back into the reader, and the per-work view (book
+// labels, per-book counts, flat-vs-drilldown, bar widths). Both live in
+// ../lib/lemma-view so they can be tested without rendering this page.
+const instHref = (work: string, book: number, inst: Instance) =>
+  instanceHref(base, work, book, inst);
 
-// For the frequency bars: scale each work's count against the most-frequent work
-// (byWork is sorted desc) so the bars are directly comparable at a glance.
+// byWork is sorted desc, so its head is the most-frequent work.
 const maxWork = data.byWork[0]?.count ?? 1;
-
-// Precompute the per-work view (book labels, per-book counts, flat-vs-drilldown)
-// in the frontmatter — comparison operators like `<=` inside inline template
-// expressions confuse Astro's JSX parser, so no logic lives in the markup.
-const worksView = data.instancesByWork.map((w) => {
-  const ww = getWork(w.work);
-  const bookless = ww ? isBookless(ww) : false;
-  return {
-    ...w,
-    bookless,
-    flat: w.shown <= 30,             // small entries render fully expanded
-    capped: w.shown < w.count,       // per-lemma INSTANCE_CAP truncated this work
-    barPct: Math.max(2, (w.count / maxWork) * 100),
-    books: w.books.map((bk) => ({
-      book: bk.book,
-      label: ww ? bookLabel(ww, bk.book) : String(bk.book),
-      bookCount: bk.chapters.reduce((n, c) => n + c.instances.length, 0),
-      chapters: bk.chapters,
-    })),
-  };
-});
+const worksView = buildWorksView(data.instancesByWork, maxWork);
 
 // ── SEO ─────────────────────────────────────────────────────────────────────
 const gloss = data.glosses[0] ?? '';
@@ -161,7 +140,9 @@ const breadcrumb = Astro.site ? {
     }
     .fb-item > summary::-webkit-details-marker { display: none; }
     .fb-item > summary:hover { background: var(--surface-2, rgba(128,128,128,.08)); }
-    .fb-name { font-size: 0.9rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    /* The name may wrap; it must never be cut to "De Generatione et…" — the
+       row is a grid, so a two-line title just makes its row taller. */
+    .fb-name { font-size: 0.9rem; min-width: 0; overflow-wrap: anywhere; }
     .fb-item > summary:hover .fb-name { color: var(--accent); }
     .fb-track { height: 0.7rem; background: var(--border); border-radius: 4px; overflow: hidden; }
     .fb-fill { display: block; height: 100%; background: var(--accent); border-radius: 4px; }
@@ -264,7 +245,7 @@ const breadcrumb = Astro.site ? {
                         </div>
                         <ul class="fb-citelist">
                           {ch.instances.map((inst) => (
-                            <li><a href={instHref(w.work, bk.book, inst)}>{inst[0]}{inst[1]}</a></li>
+                            <li><a href={instHref(w.work, bk.book, inst)}>{instanceLabel(inst)}</a></li>
                           ))}
                         </ul>
                       </div>
@@ -286,7 +267,7 @@ const breadcrumb = Astro.site ? {
                           </div>
                           <ul class="fb-citelist">
                             {ch.instances.map((inst) => (
-                              <li><a href={instHref(w.work, bk.book, inst)}>{inst[0]}{inst[1]}</a></li>
+                              <li><a href={instHref(w.work, bk.book, inst)}>{instanceLabel(inst)}</a></li>
                             ))}
                           </ul>
                         </div>

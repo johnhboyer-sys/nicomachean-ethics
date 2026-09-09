@@ -8,6 +8,7 @@
 // English search: whitespace-tokenized, lowercase.
 // Phrase search: after intersection, verify token adjacency in segment data.
 // Cross-language: AND (intersection) or OR (union) the two result sets.
+import { memoAsyncBy } from './memo';
 
 // Honour Astro's base path. BASE_URL may lack a trailing slash, so strip + join.
 // Same host override as data.ts: the desktop app points the whole data layer
@@ -29,7 +30,9 @@ export interface SegMeta {
 }
 
 type GrkIndex = Record<string, [number, number][]>; // fold → [[seg_idx, pos], ...]
-type EngIndex = Record<string, number[]>;            // word → [seg_idx, ...]
+// word → [[seg_idx, word_pos], ...] since 2026-09-07; an older build carries
+// bare seg_idxs, and the reader takes either (see englishPhraseHits).
+type EngIndex = Record<string, number[] | [number, number][]>;
 
 // The word-offset primitive: one running token number per work, in document
 // order, with the structural coordinates beside it. Global offset of a posting
@@ -37,7 +40,10 @@ type EngIndex = Record<string, number[]>;            // word → [seg_idx, ...]
 export interface Offsets {
   token_count: number;
   seg_base_offset: number[];
-  segments: { book: number; column: string; line_runs: [number, number][] }[];
+  // A run is [n, count], or [n, count, sub] on a lettered line (stage6 since
+  // 2026-09-07). An older build carries only the pair, and a token on a
+  // lettered line is then cited by the bare number, as it always was.
+  segments: { book: number; column: string; line_runs: ([number, number] | [number, number, string])[] }[];
   book_bounds: { book: number; start: number }[];
   // accuracy is 'exact' where the chapter start was matched against the Greek
   // text, 'line-snapped' where the source knew only the Bekker line.
@@ -64,7 +70,12 @@ export type GrammarQuery = Record<string, string>;
 
 // Greek search can match by dictionary headword ('lemma', every inflected form)
 // or by the exact surface form as written ('form').
-export type MatchMode = 'lemma' | 'form';
+// lemma: the reader typed a word; resolve it to every headword it can belong
+//   to (a typed inflection finds its dictionary entry) and search the lemma
+//   index. form: the exact inflected token. headword: the caller already holds
+//   the exact lemma keys (the picker's ticks) and wants those and nothing
+//   wider — the lemma index, without resolution.
+export type MatchMode = 'lemma' | 'form' | 'headword';
 
 // -- Per-work index loading (cached, lazy per file) -----------------------
 //
@@ -75,63 +86,71 @@ export type MatchMode = 'lemma' | 'form';
 // Safari/WebKit, where a large simultaneous fetch burst can drop a request with
 // "TypeError: Load failed" and (via Promise.all) sink the whole search.
 
-const _fileCache = new Map<string, Promise<unknown>>();
+// Each loader memoises through lib/memo.ts, which evicts a rejection so a
+// transient drop can be retried — a rejected promise must NOT stay cached
+// (that would poison every later search in the tab). One memo per loader,
+// rather than the single `_fileCache` these shared before: the three key spaces
+// never overlapped anyway, which is why the corpus-level one needed its "::"
+// prefix (so a path could not collide with a work called "lemma-map") and now
+// does not.
 
-function loadIndex<T>(work: string, file: string): Promise<T> {
-  const key = `${work}/${file}`;
-  const cached = _fileCache.get(key);
-  if (cached) return cached as Promise<T>;
-  const p = fetch(`${searchBase(work)}/${file}`).then(r => {
+// A per-work index is keyed `<work>/<file>`, the same string the error message
+// quotes; the search directory sits between the two in the URL.
+const searchUrl = (key: string) => {
+  const at = key.indexOf('/');
+  return `${searchBase(key.slice(0, at))}/${key.slice(at + 1)}`;
+};
+
+const _index = memoAsyncBy<string, unknown>(key =>
+  fetch(searchUrl(key)).then(r => {
     if (!r.ok) throw new Error(`HTTP ${r.status} for ${key}`);
     return r.json();
-  });
-  // Evict on failure so a transient drop can be retried — a rejected promise
-  // must NOT stay cached (that would poison every later search in the tab).
-  p.catch(() => { if (_fileCache.get(key) === p) _fileCache.delete(key); });
-  _fileCache.set(key, p);
-  return p as Promise<T>;
+  }));
+
+function loadIndex<T>(work: string, file: string): Promise<T> {
+  return _index(`${work}/${file}`) as Promise<T>;
 }
 
-// Corpus-level indexes live beside the per-work ones rather than inside them.
-// Same cache, keyed by path so it cannot collide with a work called "lemma-map".
-function loadShared<T>(path: string): Promise<T> {
-  const key = `::${path}`;
-  const cached = _fileCache.get(key);
-  if (cached) return cached as Promise<T>;
-  const p = fetch(`${ROOT()}/${path}`).then(r => {
+// Corpus-level indexes live beside the per-work ones rather than inside them,
+// so they are fetched from the root and memoised on their own path.
+const _shared = memoAsyncBy<string, unknown>(path =>
+  fetch(`${ROOT()}/${path}`).then(r => {
     if (!r.ok) throw new Error(`HTTP ${r.status} for ${path}`);
     return r.json();
-  });
-  p.catch(() => { if (_fileCache.get(key) === p) _fileCache.delete(key); });
-  _fileCache.set(key, p);
-  return p as Promise<T>;
+  }));
+
+function loadShared<T>(path: string): Promise<T> {
+  return _shared(path) as Promise<T>;
 }
 
 // The grammatical column is binary (one small int per token, indexed by global
-// offset), so it needs arrayBuffer rather than json. Cached the same way.
-function loadBinary(work: string, file: string): Promise<ArrayBuffer> {
-  const key = `${work}/${file}`;
-  const cached = _fileCache.get(key);
-  if (cached) return cached as Promise<ArrayBuffer>;
-  const p = fetch(`${searchBase(work)}/${file}`).then(r => {
+// offset), so it needs arrayBuffer rather than json. Cached the same way, in
+// its own memo — the one .bin file never shares a key with a JSON index.
+const _binary = memoAsyncBy<string, ArrayBuffer>(key =>
+  fetch(searchUrl(key)).then(r => {
     if (!r.ok) throw new Error(`HTTP ${r.status} for ${key}`);
     return r.arrayBuffer();
-  });
-  p.catch(() => { if (_fileCache.get(key) === p) _fileCache.delete(key); });
-  _fileCache.set(key, p);
-  return p as Promise<ArrayBuffer>;
+  }));
+
+function loadBinary(work: string, file: string): Promise<ArrayBuffer> {
+  return _binary(`${work}/${file}`);
 }
 
 // Run `fn` over `items` with at most `limit` in flight at once (bounds the
-// concurrent-fetch burst). Rejections propagate; callers that want per-item
-// tolerance pass an `fn` that catches.
-async function pool<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+// concurrent-fetch burst that can make Safari drop requests with "Load
+// failed"). Rejections propagate; callers that want per-item tolerance pass an
+// `fn` that catches. Shared with the components — one loop, not three copies.
+export async function pool<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
   const out: R[] = new Array(items.length);
   let next = 0;
   const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
     while (next < items.length) {
       const i = next++;
-      out[i] = await fn(items[i]);
+      out[i] = await fn(items[i], i);
     }
   });
   await Promise.all(workers);
@@ -153,7 +172,10 @@ export function greekFold(input: string): string {
     const b = GREEK_BETA[lower];
     if (b) out.push(b);                          // Unicode Greek → fold letter
     else if (lower >= 'a' && lower <= 'z') out.push(lower); // Beta Code Latin input
-    else if (ch === "'") out.push("'");
+    // Elision: the index keys δ' as d'. The page prints the mark as U+2019
+    // (δ’), so a word copied from the text must fold to the same key as one
+    // typed with a straight apostrophe.
+    else if (ch === "'" || ch === '\u2019' || ch === '\u02bc') out.push("'");
     // skip combining marks, punctuation, Beta Code diacritics ) ( / \ = | +,
     // asterisk (handled by caller), and sigma-variant digits
   }
@@ -199,8 +221,17 @@ function compilePattern(
   return { test: key => regex.test(key) };
 }
 
+// The one statement of what an English word is, on the reader's side; stage6's
+// english_words() is its mirror on the index side (pinned by a pipeline test).
+// The page prints possession and elision with U+2019 (Aristotle’s) and quotes
+// with U+2018/U+2019 (‘change’): both become a straight apostrophe, and an
+// apostrophe at a word's edge is a quotation mark, not part of the word.
+const ENGLISH_QUOTES = /[\u2018\u2019\u02bc]/g;
 function englishFold(input: string): string {
-  return input.toLowerCase().replace(/[^a-z']/g, '');
+  return input.toLowerCase().replace(ENGLISH_QUOTES, "'").replace(/[^a-z']/g, '');
+}
+function englishTerm(term: string): string {
+  return term.replace(ENGLISH_QUOTES, "'").replace(/^'+|'+$/g, '');
 }
 
 // -- Posting-list helpers -------------------------------------------------
@@ -220,20 +251,34 @@ function grkPosting(idx: GrkIndex, term: string): Set<number> {
   return result;
 }
 
+const engSeg = (p: number | [number, number]): number => (typeof p === 'number' ? p : p[0]);
+
 function engPosting(idx: EngIndex, term: string): Set<number> {
-  if (term === '*') return new Set(Object.values(idx).flat());
-  const pattern = compilePattern(term, englishFold);
-  if (!pattern) return new Set();
-  if ('exact' in pattern) {
-    return new Set(idx[pattern.exact] ?? []);
-  }
   const result = new Set<number>();
+  if (term === '*') {
+    for (const ps of Object.values(idx)) for (const p of ps) result.add(engSeg(p));
+    return result;
+  }
+  const pattern = compilePattern(englishTerm(term), englishFold);
+  if (!pattern) return result;
+  if ('exact' in pattern) {
+    for (const p of idx[pattern.exact] ?? []) result.add(engSeg(p));
+    return result;
+  }
   for (const key of Object.keys(idx)) {
     if (pattern.test(key)) {
-      for (const si of idx[key]) result.add(si);
+      for (const p of idx[key]) result.add(engSeg(p));
     }
   }
   return result;
+}
+
+// True when the index carries word positions (a build since 2026-09-07).
+function engHasPositions(idx: EngIndex): idx is Record<string, [number, number][]> {
+  for (const ps of Object.values(idx)) {
+    if (ps.length) return typeof ps[0] !== 'number';
+  }
+  return false;
 }
 
 function intersect(a: Set<number>, b: Set<number>): Set<number> {
@@ -252,9 +297,31 @@ function union(a: Set<number>, b: Set<number>): Set<number> {
 // analysis lemma for 'lemma'), and wildcard terms participate via their
 // postings. Token positions count EVERY token, so an unanalysed word between
 // two terms correctly breaks adjacency.
-function phraseStarts(idx: GrkIndex, terms: string[]): Map<number, number[]> {
+//
+// Each term is a list of ALTERNATIVE keys, any of which may stand at that
+// position: a lemma search resolves a typed inflection to every headword it can
+// belong to, and a phrase typed as it stands on the page — κατὰ συμβεβηκός —
+// must find its run under whichever of those headwords the token was analysed
+// to. Taking only the first alternative found nothing for exactly the phrases
+// a reader copies off the page.
+function phraseStarts(
+  idx: GrkIndex,
+  terms: string[][],
+  fold: (s: string) => string = greekFold,
+): Map<number, number[]> {
   const out = new Map<number, number[]>();
-  const perTerm = terms.map(t => termPositions(idx, t));
+  const perTerm = terms.map(alts => {
+    if (alts.length === 1) return termPositions(idx, alts[0], fold);
+    const merged = new Map<number, number[]>();
+    for (const alt of alts) {
+      for (const [si, ps] of termPositions(idx, alt, fold)) {
+        const arr = merged.get(si);
+        if (arr) arr.push(...ps);
+        else merged.set(si, [...ps]);
+      }
+    }
+    return merged;
+  });
   const first = perTerm[0];
   if (!first) return out;
   for (const [si, firstPositions] of first) {
@@ -268,25 +335,72 @@ function phraseStarts(idx: GrkIndex, terms: string[]): Map<number, number[]> {
   return out;
 }
 
-// English phrase: do all terms appear in order in the text?
-function engPhraseMatches(text: string, terms: string[]): boolean {
-  if (terms.length === 0) return true;
-  const lower = text.toLowerCase();
+// English phrase against a TEXT, for an index built before word positions
+// were stored: do all terms appear in order, as whole words?
+//
+// Whole words, because the postings already guarantee every term occurs as a
+// word somewhere in the segment, so a bare substring test only ADDS false
+// positives: "the good" inside "breathe goodness". Whitespace between the
+// words, any amount; punctuation between them means the phrase is not there.
+// A typed straight apostrophe matches the text's curly one.
+export function compileEnglishPhrase(terms: string[]): (text: string) => boolean {
+  if (terms.length === 0) return () => true;
   // Keep the wildcards. Folding them away here would leave `hap* virtue` looking
   // for the literal string "hap virtue", so the postings would find the phrase
-  // and this check would then throw it away.
-  const parts = terms.map(t =>
-    [...t.toLowerCase().replace(/^\*+/, '')]
+  // and this check would then throw it away. A leading * asks for any start
+  // ("*ness" — happiness, goodness), so that term takes no boundary on its left.
+  const parts = terms.map(t => {
+    const raw = t.toLowerCase();
+    const body = [...raw.replace(/^\*+/, '')]
       .filter(ch => /[a-z'*?]/.test(ch))
-      .join(''));
-  if (!parts.some(p => p.includes('*') || p.includes('?'))) {
-    return lower.includes(parts.join(' '));
+      .join('');
+    return { open: raw.startsWith('*'), body };
+  });
+  if (parts.some(p => !p.body)) return () => false;
+  const pattern = new RegExp(parts
+    .map(p => {
+      const body = [...p.body].map(ch =>
+        ch === '*' ? "[a-z']*" : ch === '?' ? "[a-z']" : ch).join('');
+      return `${p.open ? '' : "(?<![a-z'])"}${body}(?![a-z'])`;
+    })
+    .join('\\s+'));
+  // A word wrapped in single quotes — ‘change’ — closes with the same U+2019
+  // that Aristotle’s elides with, so after the fold the quote marks are
+  // apostrophes glued to the word; the index (stage6 english_words) strips
+  // them at a word's edge, and so must the boundary here.
+  return text => pattern.test(
+    text.toLowerCase()
+      .replace(ENGLISH_QUOTES, "'")
+      .replace(/(^|[^a-z'])'+|'+(?=[^a-z']|$)/g, '$1'),
+  );
+}
+export function engPhraseMatches(text: string, terms: string[]): boolean {
+  return compileEnglishPhrase(terms)(text);
+}
+
+// An English phrase is an adjacency test over the postings, exactly as a Greek
+// one is, when the index carries word positions (builds since 2026-09-07).
+//
+// An older build's postings are bare seg_idxs, and the only text the reader
+// holds then is meta.json's `english_head` — stage6's first 500 characters of
+// the segment. A phrase that stands past that cut is missed on such a build;
+// the alternative, fetching every candidate's whole book, was measured to pull
+// most of the corpus for a phrase of common words, so the older shape keeps the
+// older limit until the corpus is rebuilt.
+export const ENGLISH_HEAD_LIMIT = 500;
+
+function englishPhraseHits(
+  idx: EngIndex,
+  meta: SegMeta[],
+  candidates: Set<number>,
+  engTerms: string[],
+): Set<number> {
+  if (engHasPositions(idx)) {
+    const starts = phraseStarts(idx, engTerms.map(t => [englishTerm(t)]), englishFold);
+    return new Set([...starts.keys()].filter(si => candidates.has(si)));
   }
-  const body = parts
-    .map(p => [...p].map(ch =>
-      ch === '*' ? "[a-z']*" : ch === '?' ? "[a-z']" : ch).join(''))
-    .join(' ');
-  return new RegExp(body).test(lower);
+  const matches = compileEnglishPhrase(engTerms);
+  return new Set([...candidates].filter(si => matches(meta[si].english_head)));
 }
 
 // -- Public search API ----------------------------------------------------
@@ -322,7 +436,11 @@ export interface SearchOutcome {
 }
 
 // Positions of a single term across segments: seg_idx → [token positions].
-function termPositions(idx: GrkIndex, term: string): Map<number, number[]> {
+function termPositions(
+  idx: GrkIndex,
+  term: string,
+  fold: (s: string) => string = greekFold,
+): Map<number, number[]> {
   const m = new Map<number, number[]>();
   const add = (posts: [number, number][]) => {
     for (const [si, pos] of posts) {
@@ -331,7 +449,7 @@ function termPositions(idx: GrkIndex, term: string): Map<number, number[]> {
       else m.set(si, [pos]);
     }
   };
-  const pattern = compilePattern(term, greekFold);
+  const pattern = compilePattern(term, fold);
   if (!pattern) return m;
   if ('exact' in pattern) {
     add(idx[pattern.exact] ?? []);
@@ -350,7 +468,7 @@ function greekPositions(
 ): Map<number, number[]> {
   const out = new Map<number, number[]>();
   if (mode === 'phrase' && terms.length > 1) {
-    for (const [si, starts] of phraseStarts(idx, terms.map(alts => alts[0]))) {
+    for (const [si, starts] of phraseStarts(idx, terms)) {
       if (!hits.has(si)) continue;
       const ps: number[] = [];
       for (const s of starts) for (let j = 0; j < terms.length; j++) ps.push(s + j);
@@ -408,11 +526,9 @@ async function searchWork(
     } else {
       grkHits = postings.reduce(intersect);
       if (grkMode === 'phrase' && grkTerms.length > 1) {
-        // A phrase needs its words in order, which resolving each word to
-        // several headwords cannot express. Match the first key of each term —
-        // for a form search that is the typed word, and for a lemma search a
-        // typed phrase is what "find this phrase in any inflection" is for.
-        grkHits = new Set(phraseStarts(grkIdx, grkTerms.map(alts => alts[0])).keys());
+        // A phrase needs its words in order; each position may hold any of
+        // the keys its term resolved to.
+        grkHits = new Set(phraseStarts(grkIdx, grkTerms).keys());
       }
     }
   }
@@ -424,9 +540,7 @@ async function searchWork(
     } else {
       engHits = postings.reduce(intersect);
       if (engMode === 'phrase' && engTerms.length > 1) {
-        engHits = new Set([...engHits].filter(si =>
-          engPhraseMatches(meta[si].english_head, engTerms)
-        ));
+        engHits = englishPhraseHits(engIdx, meta, engHits, engTerms);
       }
     }
   }
@@ -456,7 +570,7 @@ async function searchWork(
 // Turn a global offset into a citable position, using only offsets.json — the
 // phrase browser shows hundreds of citations at once and must not have to fetch
 // a whole book for each. line_runs exists for exactly this.
-export interface OffsetRef { seg_idx: number; pos: number; book: number; column: string; line: number }
+export interface OffsetRef { seg_idx: number; pos: number; book: number; column: string; line: number; sub?: string }
 
 export function offsetRef(offsets: Offsets, global: number): OffsetRef | null {
   const base = offsets.seg_base_offset;
@@ -465,8 +579,10 @@ export function offsetRef(offsets: Offsets, global: number): OffsetRef | null {
   const seg = offsets.segments[seg_idx];
   if (!seg) return null;
   let left = pos;
-  for (const [line, count] of seg.line_runs) {
-    if (left < count) return { seg_idx, pos, book: seg.book, column: seg.column, line };
+  for (const [line, count, sub] of seg.line_runs) {
+    if (left < count) {
+      return { seg_idx, pos, book: seg.book, column: seg.column, line, ...(sub ? { sub } : {}) };
+    }
     left -= count;
   }
   return null;
@@ -694,7 +810,7 @@ export async function searchPhraseVariants(
       // readings routinely land on the same token.
       const bySeg = new Map<number, Set<number>>();
       for (const reading of readings) {
-        const starts = phraseStarts(idx, reading);
+        const starts = phraseStarts(idx, reading.map(t => [t]));
         if (starts.size) productiveKeys.add(reading.join(' '));
         for (const [si, positions] of starts) {
           let seen = bySeg.get(si);
@@ -807,7 +923,7 @@ function slotHits(
   if (!idx) return out;
 
   if (slot.kind === 'phrase' && terms.length > 1) {
-    for (const [si, starts] of phraseStarts(idx, terms)) {
+    for (const [si, starts] of phraseStarts(idx, terms.map(t => [t]))) {
       for (const p of starts) out.push({ start: base[si] + p, span: terms.length, certain: true });
     }
     return out;
@@ -1029,7 +1145,15 @@ async function comboSearchWork(
 
   const base = offsets.seg_base_offset;
   const perSlot = slots.map(s => slotHits(s, base, lemmaIdx, formIdx, dict, column));
-  const slotIds = slots.map(s => JSON.stringify([s.kind, s.terms ?? null, s.query ?? null]));
+  // Two slots are the same slot when they ask the same thing, whatever order
+  // the reader ticked or typed it in: a lemma slot's heads are unioned, so
+  // their order carries nothing; a phrase is a run, so its order is the
+  // question. A grammatical query's categories are a set.
+  const slotIds = slots.map(s => JSON.stringify([
+    s.kind,
+    s.terms ? (s.kind === 'phrase' ? s.terms : [...s.terms].sort()) : null,
+    s.query ? Object.fromEntries(Object.entries(s.query).sort(([a], [b]) => a.localeCompare(b))) : null,
+  ]));
   const duplicated = new Set(slotIds.filter((id, i) => slotIds.indexOf(id) !== i));
   const windows = comboWindows(
     perSlot, opts, offsets,

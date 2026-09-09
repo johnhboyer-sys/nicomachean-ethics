@@ -1,7 +1,10 @@
 # An English phrase index, and the bridge to the Greek
 
-Scoped 2026-07-27. Not built. Every number here was measured against the
-corpus as it stands after that morning's rebuild.
+Scoped 2026-07-27. Phase 1 (the English stream) shipped the same day in PR #56
+(merge `203c3c1`): `stage8_ngrams.py` carries `ENGLISH_STREAM` as its third
+stream, and the index went live in the 2026-07-27 deploy (`DEPLOY-STATUS.md`).
+Phase 2, the bridge, stays unbuilt by the decision at the end. Every number
+here was measured against the corpus as it stands after that morning's rebuild.
 
 ## What it is
 

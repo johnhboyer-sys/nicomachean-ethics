@@ -35,7 +35,7 @@
     type StripCounts,
     type TaggedPreCleanStart,
   } from '../lib/import-preclean';
-  import { isTauri } from '../lib/runtime';
+  import { isTauri, errorText } from '../lib/runtime';
   import {
     DEFAULT_PUBLISHER_PRESET_ID,
     PUBLISHER_PRESETS,
@@ -209,7 +209,7 @@
       booksCovered = new Set(Array.from({ length: resolved.books }, (_, index) => index + 1));
     } catch (error) {
       if (token !== structureLoadToken) return;
-      structureError = error instanceof Error ? error.message : String(error);
+      structureError = errorText(error);
     } finally {
       if (token === structureLoadToken) structureLoading = false;
     }
@@ -352,7 +352,7 @@
         opts,
       );
     } catch (error) {
-      errorMsg = error instanceof Error ? error.message : String(error);
+      errorMsg = errorText(error);
       step = 'error';
       return;
     }
@@ -448,26 +448,60 @@
   // pre-stage as every other accept path.
   if (file) acceptText(file.name, file.text);
 
+  // A file the app cannot read — a Latin-1 OCR .txt is the usual case, since
+  // Tauri's readTextFile rejects anything that is not valid UTF-8 — must say
+  // so in the drop zone. These reads used to run un-awaited, so the failure
+  // went to the console and the dialog simply did nothing.
+  function readFailure(name: string, e: unknown): string {
+    const detail = errorText(e);
+    if (/utf-?8/i.test(detail)) {
+      return `Could not read “${name}”: it is not UTF-8 text. Re-save it as UTF-8 (most editors offer an encoding choice) and try again.`;
+    }
+    return `Could not read “${name}”: ${detail}`;
+  }
+
+  const baseName = (path: string) => path.split(/[/\\]/).pop() ?? path;
+
+  /** Read a file and hand it to acceptText; a failed read lands in the drop
+   *  zone's error line under `name` instead of on the console. */
+  async function readInto(name: string, read: () => Promise<string>) {
+    dropError = '';
+    try {
+      acceptText(name, await read());
+    } catch (e) {
+      dropError = readFailure(name, e);
+    }
+  }
+
+  const readTauriFile = async (path: string) =>
+    (await import('@tauri-apps/plugin-fs')).readTextFile(path);
+
   async function pickFile() {
-    if (isTauri()) {
+    if (!isTauri()) {
+      browserInput?.click();
+      return;
+    }
+    dropError = '';
+    let picked: string | string[] | null;
+    try {
       const { open } = await import('@tauri-apps/plugin-dialog');
-      const { readTextFile } = await import('@tauri-apps/plugin-fs');
-      const path = await open({
+      picked = await open({
         multiple: false,
         filters: [{ name: 'Translation files', extensions: ['md', 'txt'] }],
       });
-      if (typeof path === 'string') {
-        acceptText(path.split('/').pop() ?? path, await readTextFile(path));
-      }
-    } else {
-      browserInput?.click();
+    } catch (e) {
+      dropError = readFailure('the file', e);
+      return;
     }
+    if (typeof picked !== 'string') return;
+    const path = picked;
+    await readInto(baseName(path), () => readTauriFile(path));
   }
   let browserInput: HTMLInputElement | undefined;
   async function onBrowserFile(e: Event) {
     const f = (e.target as HTMLInputElement).files?.[0];
     if (!f) return;
-    acceptText(f.name, await f.text());
+    await readInto(f.name, () => f.text());
   }
 
   // ── Drop zone ──────────────────────────────────────────────────────────────
@@ -486,13 +520,12 @@
 
   async function acceptPath(path: string) {
     dropError = '';
-    const name = path.split(/[/\\]/).pop() ?? path;
+    const name = baseName(path);
     if (!acceptName(name)) {
       dropError = 'Please drop one .txt or .md file.';
       return;
     }
-    const { readTextFile } = await import('@tauri-apps/plugin-fs');
-    acceptText(name, await readTextFile(path));
+    await readInto(name, () => readTauriFile(path));
   }
 
   async function acceptBrowserFile(f: File) {
@@ -501,7 +534,7 @@
       dropError = 'Please drop one .txt or .md file.';
       return;
     }
-    acceptText(f.name, await f.text());
+    await readInto(f.name, () => f.text());
   }
 
   let unlistenDragDrop: UnlistenFn | null = null;
@@ -838,7 +871,7 @@
         divisionGapAudit = e.audit;
         step = 'division-waiver';
       } else {
-        errorMsg = e instanceof Error ? e.message : String(e);
+        errorMsg = errorText(e);
         step = 'error';
       }
     }

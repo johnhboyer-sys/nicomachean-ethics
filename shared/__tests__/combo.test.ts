@@ -313,3 +313,45 @@ describe('searchCombo', () => {
     expect(results[0].grkPositions).toEqual([2, 3, 4]);
   });
 });
+
+describe('slot identity', () => {
+  beforeEach(() => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation((url) => {
+      const path = String(url);
+      if (path.endsWith('/meta.json')) return json(meta);
+      if (path.endsWith('/offsets.json')) return json(offsets);
+      if (path.endsWith('/greek_form.json')) return json(form);
+      if (path.endsWith('/greek_lemma.json')) return json(form);
+      return Promise.resolve({ ok: false, status: 404, json: async () => ({}) } as Response);
+    });
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  it('reads two lemma slots with the same heads as the same slot, whatever the tick order', async () => {
+    // alpha occurs once. Two slots each asking for {alpha, beta} want two
+    // occurrences of the pair's members, so one alpha may not serve both —
+    // and the order the reader ticked them in does not make them different.
+    const { results } = await searchCombo(
+      [{ kind: 'lemma', terms: ['alpha', 'beta'] }, { kind: 'lemma', terms: ['beta', 'alpha'] }],
+      opts({ window: 5 }), ['CID1'],
+    );
+    // alpha@2 for one slot, beta@4 for the other: a real pair.
+    expect(results[0].grkPositions).toEqual([2, 4]);
+    // With only alpha available to both, nothing.
+    const none = await searchCombo(
+      [{ kind: 'lemma', terms: ['alpha', 'eta'] }, { kind: 'lemma', terms: ['eta', 'alpha'] }],
+      opts({ window: 5 }), ['CID2'],
+    );
+    expect(none.results).toHaveLength(0);
+  });
+
+  it('keeps a phrase slot ordered — "delta beta" and "beta delta" are two questions', async () => {
+    const { results } = await searchCombo(
+      [{ kind: 'phrase', terms: ['delta', 'beta'] }, { kind: 'phrase', terms: ['beta', 'delta'] }],
+      opts({ window: 5 }), ['CID3'],
+    );
+    // The run delta@3 beta@4 exists; the reversed run does not, so the pair fails —
+    // not because the slots were merged, but because the second has no hit.
+    expect(results).toHaveLength(0);
+  });
+});

@@ -83,13 +83,32 @@ function safeHref(value: string): string | null {
   return trimmed;
 }
 
+// An attribute value arrives as HTML source, entities and all, and leaves
+// through escapeAttr, which escapes every "&" again: title="Smith &amp; Jones"
+// reached the browser as "Smith &amp;amp; Jones" and showed the entity itself.
+// Decoding first also puts the scheme check on what the browser would see —
+// "&#106;avascript:" IS "javascript:" — instead of on its spelling. Only the
+// entities the pipeline (and escapeAttr) write; anything else stays literal and
+// is re-escaped, so no decoding can be undone twice.
+const NAMED_ENTITY = new Map<string, string>([
+  ['amp', '&'], ['lt', '<'], ['gt', '>'], ['quot', '"'], ['apos', "'"],
+]);
+function decodeEntities(value: string): string {
+  if (!value.includes('&')) return value;
+  return value.replace(/&(?:#x([0-9a-f]{1,6})|#(\d{1,7})|([a-z]+));/gi, (m, hex, dec, named) => {
+    if (named) return NAMED_ENTITY.get(named.toLowerCase()) ?? m;
+    const cp = hex ? parseInt(hex, 16) : Number(dec);
+    return cp > 0 && cp <= 0x10ffff ? String.fromCodePoint(cp) : m;
+  });
+}
+
 function sanitizeAttrs(raw: string, tag: string): string {
   const attrs: string[] = [];
   const attrRe = /([^\s"'<>/=]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g;
   let match: RegExpExecArray | null;
   while ((match = attrRe.exec(raw))) {
     const name = match[1].toLowerCase();
-    const value = match[2] ?? match[3] ?? match[4] ?? '';
+    const value = decodeEntities(match[2] ?? match[3] ?? match[4] ?? '');
     if (name.startsWith('on')) continue;
 
     if (name === 'class' && /^[\w -]+$/.test(value)) {
@@ -112,15 +131,28 @@ function sanitizeAttrs(raw: string, tag: string): string {
   return attrs.length ? ` ${attrs.join(' ')}` : '';
 }
 
+// A tag is what the HTML tokenizer calls a tag: "<" or "</" followed AT ONCE by
+// a letter, through to the next ">". Allowing whitespace after the "<" (as this
+// did until 2026-09-07) read "a < b and c > d" as a <b> element and ate the
+// prose between; the browser shows that as text, and so does this now.
+//
+// Every "<" the tag pass leaves behind is escaped. The output is not always
+// mounted on its own: renderLsjEntry and the forms block concatenate more
+// markup after it, and set:html splices it into a server-rendered page. A
+// trailing `<a href=x onclick=alert(1)` with no ">" — which the tag pass
+// cannot match — passed through verbatim and closed itself on whatever came
+// next, `</div>` included, into a live handler. As text it is "&lt;a href…",
+// which is what the parser would have shown for it anyway. A stray "<!" or
+// "<?" likewise opened a bogus comment that hid everything up to the next ">".
 export function sanitizeHtml(html: string): string {
   return html
     .replace(/<!--[\s\S]*?-->/g, '')
-    .replace(/<\s*(script|style|iframe|object|embed)\b[\s\S]*?<\s*\/\s*\1\s*>/gi, '')
-    .replace(/<\s*\/?\s*([a-z][\w:-]*)([^>]*)>/gi, (full, rawTag, rawAttrs) => {
+    .replace(/<(script|style|iframe|object|embed)\b[\s\S]*?<\/\1\s*>/gi, '')
+    .replace(/<(\/?)([a-z][\w:-]*)([^>]*)>|</gi, (full, slash, rawTag, rawAttrs) => {
+      if (rawTag === undefined) return '&lt;';
       const tag = rawTag.toLowerCase();
       if (!ALLOWED_TAGS.has(tag)) return '';
-      const closing = /^<\s*\//.test(full);
-      if (closing) return VOID_TAGS.has(tag) ? '' : `</${tag}>`;
+      if (slash) return VOID_TAGS.has(tag) ? '' : `</${tag}>`;
       return `<${tag}${sanitizeAttrs(rawAttrs ?? '', tag)}>`;
     });
 }
@@ -511,20 +543,57 @@ export function buildFormsBlock(preamble: string): { html: string; rows: number 
   // instead, and opened two entries on an empty head.
   const compared = (seg: string, at: number): boolean =>
     /\bcf\.\s*$/.test(plainText(seg.slice(0, at)));
-  const formAt = (seg: string): number => {
+  // A form inside an unclosed "(" is not a row. ἀριθμός's "[ᾰ], (" and
+  // ἀντιτίθημι's "(pres. part." both opened the table on a parenthetical, and
+  // the row read the headword and an open bracket as its label — 83 entries.
+  // A parenthesis is counted from the START of the preamble, not of the
+  // segment: "(pres. part. X; aor. Y)" is one aside across two segments, and
+  // its second half is no more a row than its first. Plain text only, so a
+  // bracket inside a tag never counts; and ")" never goes below zero, so a
+  // stray close cannot open a table by itself.
+  const parenDepth = (html: string, from: number): number => {
+    let depth = from;
+    for (const ch of plainText(html)) {
+      if (ch === '(') depth += 1;
+      else if (ch === ')') depth = Math.max(0, depth - 1);
+    }
+    return depth;
+  };
+  const depthBefore: number[] = [0];
+  for (const seg of segments) depthBefore.push(parenDepth(seg, depthBefore[depthBefore.length - 1]));
+  const parenthesized = (seg: string, at: number, before: number): boolean =>
+    parenDepth(seg.slice(0, at), before) > 0;
+  const formAt = (seg: string, before: number): number => {
     const cit = seg.indexOf('<span class="lsj-cit">');
-    if (cit !== -1) return compared(seg, cit) ? -1 : cit;
+    // The whole segment declines for a parenthesized citation, as for "cf.":
+    // whatever follows the ")" in the same clause is prose about the aside.
+    if (cit !== -1) return compared(seg, cit) || parenthesized(seg, cit, before) ? -1 : cit;
     for (
       let greek = seg.indexOf('<span class="lsj-greek');
       greek !== -1;
       greek = seg.indexOf('<span class="lsj-greek', greek + 1)
     ) {
       if (quantityMark(seg, greek)) continue;
+      // A Greek phrase inside the bracket is skipped like a quantity mark —
+      // Ἀδράστεια's "(ἀ- priv., διδράσκω)" is an etymology, not a form — and
+      // the next phrase outside it is judged on its own.
+      if (parenthesized(seg, greek, before)) continue;
       return seg.indexOf('class="lsj-bibl"', greek) !== -1 ? greek : -1;
     }
     return -1;
   };
-  const firstForm = segments.findIndex((seg) => formAt(seg) !== -1);
+  // A lead that ends in "for" is a cross-reference, not a paradigm: ἀναγκαίη's
+  // "ἡ, Ep. and Ion, for ἀνάγκη", διπλός's "ή, όν, poet. for διπλοῦς" — 38
+  // entries, none with a form of its own. The English word at the END of the
+  // lead, after a space, never "for" inside a Greek run or mid-lead; and only
+  // the lead, so a "for" further down a real table is still a row's label.
+  // The segment stays in the head as prose; the table, if any, opens later.
+  const crossRef = (seg: string, at: number): boolean =>
+    /(?:^|\s)for$/i.test(plainLabel(seg.slice(0, at)));
+  const firstForm = segments.findIndex((seg, i) => {
+    const at = formAt(seg, depthBefore[i]);
+    return at !== -1 && !crossRef(seg, at);
+  });
   if (firstForm === -1) return { html: preamble, rows: 0 };
 
   let head = segments.slice(0, firstForm).join('');
@@ -541,7 +610,7 @@ export function buildFormsBlock(preamble: string): { html: string; rows: number 
   // path below is FORBIDDEN for Greek-shaped forms: ἀναγκαίη's "ἡ, Ep. and
   // Ion, for" is 29 characters of prose, and the length path would hand the
   // row the label "for". Greek-shaped leads cut on vocabulary evidence only.
-  const firstAt = formAt(tail[0]);
+  const firstAt = formAt(tail[0], depthBefore[firstForm]);
   const citFirst = tail[0].startsWith('<span class="lsj-cit">', firstAt);
   if (firstAt > 0) {
     const lead = tail[0].slice(0, firstAt);
@@ -601,8 +670,9 @@ export function buildFormsBlock(preamble: string): { html: string; rows: number 
   // cell, so "(" landed in the label column opposite "κατ-, συν". Rows stop at
   // the first segment with no form in it; the remainder stays prose.
   let note = '';
+  let firstLabel: string | null = null;
   for (const [i, seg] of tail.entries()) {
-    const at = formAt(seg);
+    const at = formAt(seg, depthBefore[firstForm + i]);
     if (at === -1) {
       // A segment with no form in it is either an interruption or the end of
       // the table. τίθημι is interrupted after two forms by a 136-character
@@ -611,7 +681,7 @@ export function buildFormsBlock(preamble: string): { html: string; rows: number 
       // later segment still holds a form, this is an aside — keep it with the
       // row above, INSIDE that row, never loose in the grid where it would
       // become its own cell.
-      const more = tail.slice(i + 1).some((rest) => formAt(rest) !== -1);
+      const more = tail.slice(i + 1).some((rest, j) => formAt(rest, depthBefore[firstForm + i + 1 + j]) !== -1);
       if (!more) { note = tail.slice(i).join(''); break; }
       // Before any row exists there is nothing to attach to — it belongs to the
       // head, and must never simply vanish.
@@ -623,11 +693,16 @@ export function buildFormsBlock(preamble: string): { html: string; rows: number 
     }
     const label = plainLabel(seg.slice(0, at));
     const body = seg.slice(at).replace(/[\s:;\u2014]+$/, '');
+    firstLabel ??= label;
     rows.push(
       `<div class="lsj-form"><span class="lsj-form-label">${escapeText(label)}</span>` +
       `<span class="lsj-form-body">${body}</span></div>`,
     );
   }
+  // A table whose only row has no label is not a table. διδάσκαλος and ὅλος
+  // opened on such a row once the "cf." rule took their first row away: a
+  // citation with nothing to label it. The preamble goes back whole, as prose.
+  if (rows.length === 1 && firstLabel === '') return { html: preamble, rows: 0 };
   // Align into a label column only when the labels ARE short labels. In εἰμί a
   // single segment packs several forms of which only one is tagged, so its
   // "label" runs to half a line; a column built on that is worse than no

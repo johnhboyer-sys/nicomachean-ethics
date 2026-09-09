@@ -5,8 +5,8 @@
 // The bundle is self-describing ({formatVersion, exportedAt, …}) so a future
 // "import library" can restore it; nothing in it is machine-specific.
 
-import { isTauri } from './runtime';
-import { listAnnotations, type Annotation } from './annotations';
+import { isTauri, errorText } from './runtime';
+import { annotationsProblem, listAnnotations, type Annotation } from './annotations';
 import { WORKS } from '@shared/lib/works';
 
 export interface LibraryBundle {
@@ -22,13 +22,19 @@ export interface LibraryBundle {
     content?: string;
     map: unknown;
   }[];
+  /** Stored records the export could not read; listed so the bundle never
+   *  silently claims to be complete. Absent when everything was readable. */
+  skipped?: { work: string; id: string; reason: string }[];
 }
 
 async function buildBundle(): Promise<LibraryBundle> {
   const annotations: Record<string, Annotation[]> = {};
+  const skipped: NonNullable<LibraryBundle['skipped']> = [];
   for (const w of WORKS) {
     const anns = await listAnnotations(w.id);
     if (anns.length) annotations[w.id] = anns;
+    const problem = annotationsProblem(w.id);
+    if (problem) skipped.push({ work: w.id, id: 'annotations', reason: problem });
   }
 
   const translations: LibraryBundle['translations'] = [];
@@ -43,10 +49,15 @@ async function buildBundle(): Promise<LibraryBundle> {
         for (const e of await fs.readDir(dir)) {
           if (!e.name.endsWith('.map.json')) continue;
           const id = e.name.replace(/\.map\.json$/, '');
-          const map = JSON.parse(await fs.readTextFile(await join(dir, e.name)));
-          let content: string | undefined;
-          try { content = await fs.readTextFile(await join(dir, `${id}.md`)); } catch { /* map only */ }
-          translations.push({ work: workDir.name, id, ...(content !== undefined ? { content } : {}), map });
+          // One unreadable record must not abort the export of every other.
+          try {
+            const map = JSON.parse(await fs.readTextFile(await join(dir, e.name)));
+            let content: string | undefined;
+            try { content = await fs.readTextFile(await join(dir, `${id}.md`)); } catch { /* map only */ }
+            translations.push({ work: workDir.name, id, ...(content !== undefined ? { content } : {}), map });
+          } catch (err) {
+            skipped.push({ work: workDir.name, id, reason: errorText(err) });
+          }
         }
       }
     }
@@ -54,7 +65,12 @@ async function buildBundle(): Promise<LibraryBundle> {
     for (let i = 0; i < localStorage.length; i++) {
       const k = localStorage.key(i)!;
       const m = k.match(/^import-map:(.+)\/(.+)$/);
-      if (m) translations.push({ work: m[1], id: m[2], map: JSON.parse(localStorage.getItem(k)!) });
+      if (!m) continue;
+      try {
+        translations.push({ work: m[1], id: m[2], map: JSON.parse(localStorage.getItem(k)!) });
+      } catch (err) {
+        skipped.push({ work: m[1], id: m[2], reason: errorText(err) });
+      }
     }
   }
 
@@ -64,6 +80,7 @@ async function buildBundle(): Promise<LibraryBundle> {
     exportedAt: new Date().toISOString(),
     annotations,
     translations,
+    ...(skipped.length ? { skipped } : {}),
   };
 }
 
@@ -71,7 +88,10 @@ async function buildBundle(): Promise<LibraryBundle> {
 export async function exportLibrary(): Promise<string | null> {
   const bundle = await buildBundle();
   const nAnn = Object.values(bundle.annotations).reduce((n, a) => n + a.length, 0);
-  const summary = `${nAnn} annotation${nAnn === 1 ? '' : 's'}, ${bundle.translations.length} imported translation${bundle.translations.length === 1 ? '' : 's'}`;
+  const skippedNote = bundle.skipped
+    ? `; ${bundle.skipped.length} unreadable and skipped: ${bundle.skipped.map(s => `${s.work}/${s.id}`).join(', ')}`
+    : '';
+  const summary = `${nAnn} annotation${nAnn === 1 ? '' : 's'}, ${bundle.translations.length} imported translation${bundle.translations.length === 1 ? '' : 's'}${skippedNote}`;
   const json = JSON.stringify(bundle, null, 1);
   const filename = `aristotle-reader-library-${bundle.exportedAt.slice(0, 10)}.json`;
 

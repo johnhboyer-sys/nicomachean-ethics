@@ -1,6 +1,7 @@
 # Corpus analysis — possible reader features
 
-*Status: scoping only, nothing implemented. From the 2026-08-18 session that started
+*Status: scoping survey; features 1, 2, 5 and 8 have since shipped (marked in the
+tables below). From the 2026-08-18 session that started
 as a stylometry experiment (`analysis/`, branch `claude/greek-statistical-analysis-tihpcs`)
 and turned into a survey of what statistical/semantic methods could give the reader.*
 
@@ -23,8 +24,8 @@ Not a lawyer's opinion. The licence governs.
 
 | | What a reader gets | Cost | Notes |
 |---|---|---|---|
-| **1. Is this word technical?** | Popup says *"coined by Aristotle"* vs *"ordinary word used technically"*, plus first attestation | **Low** | Highest value-for-effort. One number per lemma, one shard, no new UI. ἐντελέχεια (139× in corpus, ~0 before him) vs οὐσία (1,077×, ordinary Greek for "property") |
-| **2. Quotation detection** | Unmarked quotations get citations — *Meta.* Λ ends on *Il.* 2.204 with no attribution | Medium | Ship the citation, link out to Perseus for text. Fuzzy: he quotes from memory, needs a human pass. Also surfaces Presocratic fragments, which survive *because* he quotes them |
+| **1. Is this word technical?** | Popup says *"coined by Aristotle"* vs *"ordinary word used technically"*, plus first attestation | **Low** | **Shipped** — offline counter PR #88, rulings PR #89–90, reader wiring PR #94 (`spec-word-distinctiveness.md`). Highest value-for-effort. One number per lemma, one shard, no new UI. ἐντελέχεια (139× in corpus, ~0 before him) vs οὐσία (1,077×, ordinary Greek for "property") |
+| **2. Quotation detection** | Unmarked quotations get citations — *Meta.* Λ ends on *Il.* 2.204 with no attribution | Medium | **Shipped** — matcher PR #88, curated *Metaphysics* pilot PR #91, marginal siglum PR #94 (`spec-quotation-detection.md`); only *Meta.* carries a quotations file so far. Ship the citation, link out to Perseus for text. Fuzzy: he quotes from memory, needs a human pass. Also surfaces Presocratic fragments, which survive *because* he quotes them |
 | **3. Reception counts** | "recurs 5× in Aristotle, 40× in the commentators" | Medium | **Parked.** Scholar's instrument, not a reader feature. A lookup, not a second index — the phrase list already exists in stage 8 |
 | **4. CAG anchoring oracle** | — (enabler) | Medium | The commentary layer takes CAG text from OGL `cag-dev`: dev-grade OCR, no Bekker anchors. Use the TLG's clean CAG to *compute* the anchor table; ship OGL text + our anchors. Turns a manual project into a mostly-automated one. Highest leverage, but only once that layer moves |
 
@@ -32,10 +33,10 @@ Not a lawyer's opinion. The licence governs.
 
 | | What a reader gets | Cost | Notes |
 |---|---|---|---|
-| **5. Live LSJ citations** | Every `Arist.` citation in an LSJ entry becomes an internal reader link | **Low** | `stage5_lsj.py` renders `<bibl>` as an inert `.lsj-bibl` span. Pure parsing. Probably the best hours-to-value item on this page, and doable today |
+| **5. Live LSJ citations** | Every `Arist.` citation in an LSJ entry becomes an internal reader link | **Low** | **Shipped** — PR #81 (`spec-lsj-citations.md`). Before it, `stage5_lsj.py` rendered `<bibl>` as an inert `.lsj-bibl` span. Pure parsing. Was the best hours-to-value item on this page |
 | **6. Contextual sense** | *"here: responsible, answerable — the moral sense"* instead of LSJ's full sense list | Medium–high | Demonstrated on αἴτιος: *EN* 1114b (moral) vs *Phys.* 197a (efficient cause), identical grammar. See §Limits — the machine groups, a scholar labels |
 | **7. Parallel passages** | Same doctrine in different words, across works | Medium | *EN* 1114b / *EE* 1223a on responsibility surfaced with nothing asked for. String search cannot do this; the corpus is very self-referential |
-| **8. Text-quality gate** | — (pipeline QA) | **Low** | Breathing marks in orthographically illegal positions: **First1K 3.00/10k vs Perseus 0.92/10k**. Catches run-together words (`ποιοῦσιναἱ`, `τὴνφορὰνἔφαμεν`) and displaced glyphs. Worth a build gate regardless of any feature here |
+| **8. Text-quality gate** | — (pipeline QA) | **Low** | **Shipped** — PR #82, armed in PR #85 (`spec-text-quality-gate.md`). Breathing marks in orthographically illegal positions: **First1K 3.00/10k vs Perseus 0.92/10k**. Catches run-together words (`ποιοῦσιναἱ`, `τὴνφορὰνἔφαμεν`) and displaced glyphs. Worth a build gate regardless of any feature here |
 
 ## Limits any of these inherit
 
@@ -125,9 +126,9 @@ Everything below cost real time this session. All verified against the data.
 
 ## Suggested order
 
-1. **(5) LSJ citation linking** — no TLG, low cost, closes an obvious loop.
-2. **(8) text-quality gate** — no TLG, low cost, protects everything else.
-3. **(1) word distinctiveness** — needs the disc, but offline and self-contained.
+1. **(5) LSJ citation linking** — no TLG, low cost, closes an obvious loop. *Shipped.*
+2. **(8) text-quality gate** — no TLG, low cost, protects everything else. *Shipped.*
+3. **(1) word distinctiveness** — needs the disc, but offline and self-contained. *Shipped.*
 4. **(4) CAG anchoring** — when the commentary layer moves.
 
 (6) and (7) are the interesting ones and the least certain; they want a prototype

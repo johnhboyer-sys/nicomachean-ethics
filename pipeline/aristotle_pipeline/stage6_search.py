@@ -13,11 +13,14 @@ Emits these files under build/stage6/:
                  keyed by the SURFACE form as written (the inflected token), so
                  a query can match the exact form rather than the whole lemma.
 
-  english.json — {word: [seg_idx, ...]}
-                 Lowercased, punctuation-stripped English words.
-                 Phrase search is handled at query time via string inclusion
-                 on the (small) English chunk texts in meta.json, so
-                 positions are not stored here.
+  english.json — {word: [[seg_idx, word_pos], ...]}
+                 Lowercased English words as english_words() splits them,
+                 with the word's position in its segment, so a phrase is an
+                 adjacency test over postings exactly as it is for Greek.
+                 (Until 2026-09-07 the postings were bare seg_idxs and the
+                 reader verified a phrase against english_head, which holds
+                 only the first 500 characters; the reader still reads that
+                 shape from an older build.)
 
   meta.json    — [{id, book, column, greek_head, english_head}]
                  Ordered list of segment metadata, indexed by seg_idx.
@@ -50,11 +53,27 @@ from .stage2_validate import check_grammar, check_ngram_streams, check_offsets
 
 _FOLD = re.compile(r"[^a-z']")  # keep only base letters and apostrophe
 _EN_WORD = re.compile(r"[a-z']+")
+# The archive translations print possessives and contractions with U+2019
+# (Aristotle’s, isn’t); U+02BC is the modifier-letter apostrophe. The reader
+# folds a typed straight apostrophe to itself (englishFold) and, in its phrase
+# check, folds the text's curly one to straight (engPhraseMatches) — so the
+# index must key "aristotle's" as one word or neither path can find it.
+_EN_APOSTROPHE = re.compile("[\u2019\u02bc]")
 
 
 def fold_lemma(beta_key: str) -> str:
     """Strip all Beta Code diacritics; keep only base letters + apostrophe."""
     return _FOLD.sub("", beta_key.lower())
+
+
+def english_words(text: str) -> list[str]:
+    """The English word stream as the reader's fold sees it: lowercase, curly
+    apostrophes made straight, split on anything outside [a-z']. An apostrophe
+    at a word's edge is a quotation mark (‘change’ closes with the same U+2019
+    that Aristotle’s elides with) and is not part of the word. Shared with
+    stage8 so english.json and english-segments.json count the same words."""
+    words = _EN_WORD.findall(_EN_APOSTROPHE.sub("'", text).lower())
+    return [w for w in (raw.strip("'") for raw in words) if w]
 
 
 # -- Morphology feature vocabulary -------------------------------------------
@@ -226,16 +245,17 @@ def run(manifest: Manifest) -> Path:
     greek_form = _dedupe(form_posts)
 
     # -- English inverted index -----------------------------------------------
-    # word -> sorted list of unique seg_idxs
-    eng_posts: dict[str, set] = defaultdict(set)
+    # word -> [[seg_idx, word_pos], ...] in document order; word_pos counts
+    # every word of the segment's English as english_words() splits it.
+    eng_posts: dict[str, list] = defaultdict(list)
     for seg in segments:
         eng = eng_by_id.get(seg["id"])
         if not eng:
             continue
         si = seg_idx[seg["id"]]
-        for word in _EN_WORD.findall(eng["text"].lower()):
-            eng_posts[word].add(si)
-    english_idx = {w: sorted(idxs) for w, idxs in eng_posts.items()}
+        for pos, word in enumerate(english_words(eng["text"])):
+            eng_posts[word].append([si, pos])
+    english_idx = dict(eng_posts)
 
     # -- Segment metadata -----------------------------------------------------
     meta = []
@@ -270,9 +290,15 @@ def run(manifest: Manifest) -> Path:
     for seg in segments:
         seg_base_offset.append(running)
         # line_runs lets the client turn an offset back into a Bekker line
-        # without fetching the whole book-NN.json.
-        line_runs = [[l["n"], len(l["tokens"])] for l in seg["lines"]]
-        running += sum(n for _, n in line_runs)
+        # without fetching the whole book-NN.json. A run is [n, count], or
+        # [n, count, sub] on a lettered line: Bekker's 244b5a is its own line
+        # beside 244b5, and a run that carried only the number cited every
+        # token in it as 244b5 (about 48 lines corpus-wide).
+        line_runs = [
+            [l["n"], len(l["tokens"]), l["sub"]] if l.get("sub") else [l["n"], len(l["tokens"])]
+            for l in seg["lines"]
+        ]
+        running += sum(r[1] for r in line_runs)
         seg_coords.append(
             {"book": seg["book"], "column": seg["column"], "line_runs": line_runs}
         )
@@ -286,44 +312,52 @@ def run(manifest: Manifest) -> Path:
             book_bounds.append({"book": seg["book"], "start": seg_base_offset[i]})
 
     # Chapters DO straddle segments, so each bound is resolved down to a token.
-    spine_lines = {
-        (s["column"], l["n"]): l["text"]
-        for s in spine["segments"]
-        for l in s["lines"]
-    }
+    # The spine and the tokens document are parallel line for line (stage7
+    # checks it), so a line's text is looked up by POSITION. A number is not a
+    # key: a column can carry it twice with no suffix (DA 430b.20's halves
+    # around a secluded block) or once plain and again lettered (Phys 244b's
+    # 5, 5a), and a chapter anchor names only the number — its wordIndex
+    # counts words within whichever of those lines it fell on.
+    spine_lines_by_id = {s["id"]: s["lines"] for s in spine["segments"]}
     chapter_bounds: list[dict] = []
     for ch in english.get("chapters", []):
         si = seg_idx.get(f"{ch['book']}:{ch['column']}")
         if si is None:
             continue
         want = int(ch["line"])
-        base, line = seg_base_offset[si], None
-        for l in segments[si]["lines"]:
+        spine_seg = spine_lines_by_id.get(segments[si]["id"], [])
+        base = seg_base_offset[si]
+        candidates: list[tuple[int, dict, str]] = []
+        for j, l in enumerate(segments[si]["lines"]):
             if l["n"] == want:
-                line = l
-                break
+                text = spine_seg[j]["text"] if j < len(spine_seg) else ""
+                candidates.append((base, l, text))
             base += len(l["tokens"])
-        if line is None:
+        if not candidates:
             continue
         # Only the grc-TEI path matches chapter starts against the Greek text
         # (stage1_chapters sets wordAnchor there); the explicit and extra paths
         # know the Bekker line and write wordIndex 0. Without that anchor the
         # bound snaps to the line start, and says so, rather than pretending to
-        # token precision it does not have.
-        idx = (
-            remap_word_index(
-                spine_lines.get((ch["column"], want), ""),
-                line["tokens"],
-                ch["wordIndex"],
-            )
-            if ch.get("wordAnchor")
-            else None
-        )
+        # token precision it does not have. With one, the anchor still names
+        # its line by number alone: if exactly one same-numbered line can hold
+        # the count it is exact there; if more than one can, the count cannot
+        # be attributed and the bound snaps rather than guess a half.
+        start, idx = candidates[0][0], None
+        if ch.get("wordAnchor"):
+            aligned = [
+                (line_base, i)
+                for line_base, line, text in candidates
+                if (i := remap_word_index(text, line["tokens"], ch["wordIndex"])) is not None
+            ]
+            if len(aligned) == 1:
+                idx = aligned[0][1]
+                start = aligned[0][0] + idx
         chapter_bounds.append(
             {
                 "book": ch["book"],
                 "chapter": ch["chapter"],
-                "start": base + (idx if idx is not None else 0),
+                "start": start,
                 "accuracy": "exact" if idx is not None else "line-snapped",
             }
         )

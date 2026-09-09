@@ -11,6 +11,8 @@
  * to override, not toward being "clever."
  */
 
+import { normalizeText } from '../chapterfile/text';
+
 // ── heuristic thresholds (named, tuned for prose-vs-verse, not exact science) ─
 
 /**
@@ -35,11 +37,6 @@ const SHORT_LINE_CHARS = 40;
  */
 const SHORT_LINE_FRACTION = 0.6;
 
-/** Normalize CRLF/CR to LF, matching every other import module's basis. */
-function normalizeLineEndings(text: string): string {
-  return text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-}
-
 /**
  * Guess the row unit for a block of free text.
  *
@@ -56,7 +53,7 @@ function normalizeLineEndings(text: string): string {
  *   wrapped or not, is the common case this heuristic targets).
  */
 export function detectUnit(text: string): 'lines' | 'paragraphs' {
-  const normalized = normalizeLineEndings(text).trim();
+  const normalized = normalizeText(text).trim();
   if (normalized.length === 0) return 'lines';
 
   const allLines = normalized.split('\n');
@@ -78,7 +75,7 @@ export function detectUnit(text: string): 'lines' | 'paragraphs' {
  * single space; each row is whitespace-trimmed; empty blocks are dropped.
  */
 export function splitIntoParagraphRows(text: string): string[] {
-  const normalized = normalizeLineEndings(text);
+  const normalized = normalizeText(text);
   const blocks = normalized.split(/\n\s*\n+/);
   const out: string[] = [];
   for (const block of blocks) {
@@ -107,7 +104,7 @@ export interface LineRowsResult {
  * anywhere in the text ⇒ `paragraphStarts` is just `[1]`.
  */
 export function splitIntoLineRows(text: string): LineRowsResult {
-  const normalized = normalizeLineEndings(text);
+  const normalized = normalizeText(text);
   const rawLines = normalized.split('\n');
 
   const lines: string[] = [];

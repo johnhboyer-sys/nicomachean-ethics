@@ -1,5 +1,6 @@
 import { fetchChapters, type ChapterRef } from '@shared/lib/data';
 import { WORKS } from '@shared/lib/works';
+import { errorText } from './runtime';
 
 export type PublisherPresetId = 'other' | 'clarendon' | 'peripatetic';
 export type FootnotePlacement = 'page-bottom' | 'endnote';
@@ -253,7 +254,7 @@ export async function resolveWorkStructure(
     try {
       chapters = await fetchChapters(workId);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = errorText(error);
       fail(workId, `chapters.json could not be loaded (${message}).`);
     }
   }

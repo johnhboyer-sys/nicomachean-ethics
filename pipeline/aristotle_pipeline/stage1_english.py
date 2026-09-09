@@ -191,18 +191,24 @@ def add_bekker_gutter(english: dict, spine: dict, dense: bool = False) -> None:
         # the milestone-anchored Rackham/TEI works keep their canonical cadence.
         if dense:
             targets = sorted(set(targets) | {n for n in reals if first_line <= n <= last})
-        ticks, seen = [], set()
+        # One tick per char offset. Targets are walked in ascending line order,
+        # so an ESTIMATE for an earlier line reaches a given offset before the
+        # real anchor that holds it — first-wins therefore dropped hand-keyed and
+        # milestone anchors, and printed the estimate's line number in their
+        # place. A real anchor displaces an estimate; every other collision keeps
+        # the earlier line, as before.
+        by_off: dict[int, dict] = {}
         for t in targets:
             if t in reals:
                 off, real = reals[t], True
             else:
                 off, real = _snap_word(text, round(_interp_offset(pts, t))), False
             off = max(0, min(off, tlen))
-            if off in seen:
+            prev = by_off.get(off)
+            if prev is not None and not (real and not prev["real"]):
                 continue
-            seen.add(off)
-            ticks.append({"n": t, "offset": off, "real": real})
-        ticks.sort(key=lambda x: x["offset"])
+            by_off[off] = {"n": t, "offset": off, "real": real}
+        ticks = sorted(by_off.values(), key=lambda x: x["offset"])
         c["bekker"] = ticks
 
 

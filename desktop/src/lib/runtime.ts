@@ -52,3 +52,24 @@ export async function initDataLayer(): Promise<DataLayerInfo> {
   // No on-disk corpus: fall through to /data (tauri dev against the vite server).
   return { host: 'tauri', corpusDir: null };
 }
+
+// ── small runtime helpers shared by the data modules ────────────────────────
+
+/** The message of a thrown value, whatever was thrown. */
+export function errorText(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
+}
+
+type AtomicFs = Pick<typeof import('@tauri-apps/plugin-fs'), 'writeTextFile' | 'rename'>;
+
+/**
+ * Write-then-rename: stage `body` under `<path>.tmp` and move it into place
+ * only once fully written, so a crash mid-write can never leave a truncated
+ * file at `path`. rename() is atomic on every desktop filesystem Tauri
+ * targets (same directory).
+ */
+export async function atomicWriteText(fs: AtomicFs, path: string, body: string): Promise<void> {
+  const tmp = `${path}.tmp`;
+  await fs.writeTextFile(tmp, body);
+  await fs.rename(tmp, path);
+}

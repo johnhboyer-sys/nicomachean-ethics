@@ -90,6 +90,17 @@ const works = readdirSync(DATA, { withFileTypes: true })
   .filter((w) => existsSync(join(DATA, w, 'analyses.json')))
   .filter((w) => workAuthor(w) === 'Aristotle');
 
+// Refuse before touching any output. With no qualifying work the walk below
+// is empty, and the old behaviour was to wipe public/data/lemmata/, write an
+// empty lemmata.json + _index.json + picker shards, and only then crash on
+// the report line with "Cannot read properties of undefined (reading
+// 'count')" — a confusing failure that had already destroyed the previous
+// run's lemma pages.
+if (works.length === 0) {
+  console.error(`build-lemmata: no Aristotle work with analyses.json under ${DATA} — refusing to write.`);
+  process.exit(1);
+}
+
 // Titles + a stable display order from each work's manifest.
 const title = {};
 for (const w of works) {
@@ -219,9 +230,13 @@ for (const w of works) {
           const g = a0.gloss && cleanGloss(a0.gloss);
           if (g) b.glosses.set(g, (b.glosses.get(g) ?? 0) + 1);
           // Complete (capped) instance list for the per-work "every citation"
-          // disclosure: compact [book, column, line, surface] tuples.
+          // disclosure: compact [book, column, line, surface, sub?] tuples. The
+          // sub is a lettered line's letter and rides along only when the line
+          // has one — it belongs to the line's identity, and a citation that
+          // drops it names an anchor the reader never emits (GA 775a prints
+          // 11a/11b/11c and no bare 11).
           if (b.instN < INSTANCE_CAP) {
-            (b.inst[w] ??= []).push([book, seg.column, gl.n, tok.t]);
+            (b.inst[w] ??= []).push([book, seg.column, gl.n, tok.t, ...(gl.sub ? [gl.sub] : [])]);
             b.instN++;
           }
         }
@@ -265,15 +280,15 @@ for (const b of top) {
   // registry); here we emit book NUMBER + chapter id + the chapter's Bekker span.
   // `shown` may be < the work's true count if the per-lemma INSTANCE_CAP was hit.
   const instancesByWork = byWork.map((bw) => {
-    const raw = b.inst[bw.work] ?? [];   // [[book, col, line, surface], …]
+    const raw = b.inst[bw.work] ?? [];   // [[book, col, line, surface, sub?], …]
     const bookMap = new Map();
-    for (const [book, col, line, surface] of raw) {
+    for (const [book, col, line, surface, sub] of raw) {
       const ref = resolveChapter(bw.work, book, col, line);
       const chId = ref?.chapter ?? '?';
       if (!bookMap.has(book)) bookMap.set(book, new Map());
       const chMap = bookMap.get(book);
       if (!chMap.has(chId)) chMap.set(chId, { chapter: chId, bekker: ref?.bekker ?? '', order: ref?.order ?? 999, instances: [] });
-      chMap.get(chId).instances.push([col, line, surface]);
+      chMap.get(chId).instances.push(sub ? [col, line, surface, sub] : [col, line, surface]);
     }
     const books = [...bookMap.keys()].sort((x, y) => x - y).map((book) => ({
       book,

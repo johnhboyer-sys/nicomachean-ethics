@@ -3,6 +3,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build:public": "node scripts/build-public.mjs"
+    "build:public": "node scripts/build-public.mjs",
+    "deploy": "node scripts/deploy-gh-pages.mjs",
+    "deploy:dry": "node scripts/deploy-gh-pages.mjs --dry-run",
+    "test:scripts": "node --test \"scripts/__tests__/**/*.test.mjs\""
   }
 }

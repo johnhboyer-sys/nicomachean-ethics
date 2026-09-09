@@ -3,9 +3,108 @@
 Live site: https://johnhboyer-sys.github.io/aristotle-reader/ (custom domain aristotle.lyceum.institute pending — DNS/cert not yet live, do not link it).
 Deploy recipe: build `app/dist` (`PUBLIC_SHOW_PRIVATE=0 npm run build`, Node 22), then commit incrementally onto a fresh `gh-pages` clone (rsync + commit + push) — never `rm -rf .git && git init` at this size, it times out.
 
+**The recipe is now `npm run deploy` (`scripts/deploy-gh-pages.mjs`); rehearse with `npm run deploy:dry`.**
+It refuses a missing dist or a `dist/bonitz`, runs the link gate, shallow-clones `gh-pages`, reports rsync's deletions BY CATEGORY, and restores every deletion under `data/` that is a file at the live HEAD — a live-only file until proven otherwise — unless `--allow-data-deletions=<prefix>[,<prefix>]` names it (bare `--allow-data-deletions` means all of `data/`).
+The leak check runs in Node (no shell glob) with the "Aristotle" positive control; it commits naming the source commit, pushes, and prints the live URLs to verify (`--verify` polls them).
+Flags: `--dry-run --remote=<url> --dist=<path> --allow-data-deletions[=<prefix>,…] --verify --skip-link-check`. Removing a work's data from live is an explicit `--allow-data-deletions=data/<Work>`; a new benign leak hit goes into `KNOWN_BENIGN` at the top of the script, with the reason.
+`npm run test:scripts` covers its pure functions.
+
 The env var is `PUBLIC_SHOW_PRIVATE` (unset or `0` = private translations hidden); `PUBLIC_HIDE_PRIVATE` is a stale name that appears in older entries below and sets nothing. `app/src/pages/bonitz.astro` was removed on 2026-09-03, so the build no longer emits `app/dist/bonitz` or `_astro/bonitz.*.css`; entries below that say "bonitz.astro moved aside" describe the old ritual. `/bonitz/` stays a 404 on live and the post-deploy check still asserts it.
 
 **Before committing an app-only deploy, restore every live file the local `build/dist` does not have.** `rsync --delete` stages them for deletion and the count alone will not tell you: read the deletions BY CATEGORY. Two are known — `data/reports` (76 of 88 files, pipeline output, untracked, caught 2026-08-19) and `data/Meta/quotations.json` (generated in the quirky-sanderson worktree on 2026-08-22 and never landed in the main checkout, caught 2026-08-30). Both are restored with `git checkout HEAD -- <path>` inside the gh-pages clone. Expect a third: anything a past deploy built in a worktree lives only on the live site.
+
+## 2026-09-09 — DEPLOYED: the catch-up branch, corpus rebuild and the lettered-line repair
+
+`gh-pages 5f358186 → 5a112c42`, source `a2b15077f8` on `claude/weekly-usage-catchup-h8go43`
+(not merged to main; `origin/main` was still `8e55062` — the merge-base — with nothing on it
+that this branch lacked, so the branch-not-main precondition held).
+
+Command: `npm run deploy -- --allow-data-deletions=data/ngrams/english`.
+
+**That flag was for this deploy only. Do not make it the habitual invocation** — it switches off
+the protection that caught the files below.
+
+Diff: 7,330 files — 7 A / 7,307 M / 12 D / 4 R. The 7,307 modifications are expected: the English
+index now carries word positions, so every `search/` file moves. Deletions were the 7 superseded
+`_astro` bundles plus 5 stale files, deliberately let through:
+
+- `data/ngrams/english/_.json` and its four `occ/_-*.json` companions. The `_` shard is the bucket
+  for phrases not starting a–z (`stage8_ngrams._shard_letter`). It held 1,862 phrases, every one
+  opening with an apostrophe. This branch made the page's apostrophe fold like a typed one, so all
+  1,862 re-bucketed into the letter shards and the build stopped emitting `_` entirely. Restoring
+  it — the script's default — would have left the site answering apostrophe-initial phrase searches
+  out of an index built by the old code, with the old offsets and no word positions. Verified 404
+  on live after the deploy.
+
+**The corpus rebuild ran and passed**, which resolves the two gates the 2026-09-07 note flagged as
+possibly-red:
+
+- **The Isagoge's stage 2 passed** (`columns=ok`). Its Busse column check now compares against the
+  manifest's declared range rather than the spine against itself; the export is not missing a page.
+- **The link gate failed the first build**, correctly, on a real regression — see below. It reports
+  `0 broken` on what shipped.
+- All 41 works `overall: PASS`; preflight clean; shared LSJ verified (14,047 entries / 24 shards,
+  63,261 referenced keys, all resolve).
+
+### The regression the link gate caught, and the three commits that fixed it
+
+GA column 775a is the only place in the corpus where a Bekker line has no unlettered member: the
+TLG source prints `11a`, `11b`, `11c` and no bare `11`. (Of 38 duplicate-line-number groups in the
+corpus, the other 37 keep an unlettered first record.) The branch's lettered-line work gave those
+their own anchors, but the consumers that address a line by number were not all updated.
+
+- `dc848396fb` — the lemma deep link carries the letter; the link gate's `loc` pattern widened from
+  `(\d+)` to `(\d+[a-z]?)`, because it had been *skipping* lettered citations rather than failing
+  them — a check that declines to look reports green on a link it never verified.
+- `06682bae3b` — the printed citation now says what the link does. Round one moved the href and
+  left the text reading `775a11`, so three chips said the same thing and went to three different
+  lines. Found by adversarial review (Grok), confirmed on the built page.
+- `a2b15077f8` — search and the reader's snap-to-nearest can both see a lettered line. Search read
+  `line.n` and dropped the suffix, so Physics 244b5a printed and linked as `244b5` — a real but
+  different line, so the reader was sent one line up silently. The snap matched only ids ending in
+  a digit, so a citation of `775a11` landed on line 10. Both rules now live in `lib/data` beside
+  `lineRef` (`lineAtPosition`, `nearestLineAnchor`) because neither was testable inside a
+  component. Found by adversarial review (Codex).
+
+Verified on live: `lemma/gyne` links `775a:11a` / `775a:11c` and prints `775a11a` / `775a11c`
+(0 bare `775a:11` links remain); `GA/book/4` emits `L775a-11a/-11b/-11c`. Sitewide before deploy:
+417,900 lemma citations, 212 lettered, 0 where the label disagrees with its link.
+
+Post-deploy checks, all as expected (Pages published ~130 s after push): 200 on `/`, `/EN/book/1/`,
+`/lemma/logos/`, `/data/lsj-heads.json`, `/data/Meta/quotations.json`, `/data/reports/quality_EN.json`,
+the new `_astro/Reader.CPccYIWj.js` and `_astro/global.jhbSq3zm.css`; 404 on `/bonitz/`, all 7
+superseded bundles, and the 5 deleted ngram files.
+
+### Known and NOT fixed by this deploy
+
+Four residual lettered-line defects, all desktop-only or cosmetic, from the same Codex review:
+annotation capture rejects a lettered line id (no highlight or note on one); the scroll tracker
+cannot turn a lettered anchor into a citation, so the URL and saved position go stale; both copy
+formatters emit the anchor's hyphen (`775a-11a`), which Bekker Jump then cannot parse; and the
+command palette's separate citation parser rejects `775a11a` that Bekker Jump accepts. Also
+unchanged: the snap still ignores a wrapped continuation line's `-c` id, as it did before.
+
+The LSJ forms-block audit was run and is a finding, recorded in HANDOFF-LSJ: `tables lost 208`
+against an expected ~123, and 5 entries reported as losing characters. The 5 are benign — the only
+absent text is the renderer's own `${forms.rows} forms` disclosure label, which those entries no
+longer get because they are prose now; the dictionary text is identical. The 208 is unexplained and
+is John's call, and it blocks nothing here: `shared/lib/html.ts` renders no LSJ entry on the
+website, only in the desktop app.
+
+## Pending on `claude/weekly-usage-catchup-h8go43` — NOT deployed (2026-09-07)
+
+Fifteen commits, all tests green (shared 441, app 8, desktop 464, workbench 1,829, pipeline 255, scripts 27), nothing built or deployed: the session ran in a container with no `build/dist`, no TLG, and no network. What each piece needs before it is live:
+
+- **Corpus rebuild (`npm run build:public`)** for the pipeline fixes to reach the site: `english.json` postings carry word positions (`[[seg_idx, word_pos], …]`, so an English exact phrase is an adjacency test and no longer limited to the first 500 characters of a segment) and key possessives and contractions as one word (`aristotle's`, not `aristotle` + `s`); chapter bounds on doubled or lettered lines; chapter ranges that end on a real line (PA 689a); preflight now refuses data built from the private manifest against a public one. Expect the English index and every `search/` file to change; `english_head` and offsets should not. The reader reads both index shapes, so an app-only deploy before the rebuild is safe.
+- **The link gate is stricter.** `check-links.mjs` now fails any root-relative href in emitted HTML that lacks `/aristotle-reader`. Every source was traced and none should trip it, but the first `build:public` is the proof; a false fail is loud.
+- **Deploy with `npm run deploy:dry` first**, then `npm run deploy`. New script; its clone and rsync path has never run against the real gh-pages.
+- **Desktop LSJ forms block**: three rules built, corpus audit NOT run. `node shared/scripts/audit-forms-block.mjs origin/main build/dist/lsj` before the desktop picks up `shared/lib/html.ts`. Then rebuild the desktop `.app`; its library writes are now `.tmp` + rename under a new `fs:allow-rename` grant.
+- **Workbench**: the Add work… dialog shipped this morning threw `ReferenceError` on render — a prop declared in its `$props()` type and never destructured, which `tsc` cannot see because it does not read `.svelte` files. Fixed, and a sweep of all 31 components now guards the class. Rebuild the `.app`; re-import Physics from the disc, type one character, quit, reopen — the outline must still show eight books (SESSION-HANDOFF.md item 0).
+- **Patch forward to plato-reader and homer-reader**: `shared/lib/html.ts` (sanitizer: stray `<` escaped, attribute entities decoded before the scheme check), `shared/lib/betacode.ts` (capital with iota subscript), `shared/lib/search.ts` and `data.ts` (the search fixes, the memo helper, the lettered line), `shared/components/Reader.svelte` and `Phrases.svelte`. Both repos exist and are pushable, but attaching them to a session was refused by the permission classifier on 2026-09-07, so none of this has been ported.
+- **CI now gates more**: the repo-level script tests run, the workbench is typechecked, and the pipeline job no longer tolerates a pytest run that collects nothing. A registry-versus-manifest drift test runs in the pipeline job — it reads `works.ts` with regexes, so if that file is restructured its first test fails loudly rather than passing over an empty list.
+- **Diff `build/dist` after the rebuild, do not just gate on it.** Two pipeline fixes change emitted VALUES, not shape: a chapter opening now needs a word boundary (it could match inside a longer word and still be stamped `wordAnchor`), and the milestone fallback searches from the monotonic cursor instead of the start of the work, so a chapter that used to be filed above the one before it moves. Chapter `column`/`line`/`wordIndex` can shift, and a previously-resolved chapter may come out unresolved — that is the intended trade, but read the diff. Separately, `add_bekker_gutter` no longer lets an interpolated tick evict a real hand-keyed anchor, so the per-chunk ticks of the densely-anchored works (Categories and its family) can move.
+- **The Isagoge's stage 2 may newly fail.** Its Busse column check compared the spine against itself and so could not fail; it now compares against the manifest's declared range. If the export really is missing a page, the build stops — the point of the gate, but it has never once been exercised.
+- **The lettered-line gap is closed end to end** (it was recorded here as the one rebuild decision left): `line_runs` carries a line's letter, `offsetRef` returns it, and the reader gives 244b5a its own anchor, gutter label and citation instead of sharing 244b5's. The third element is additive, so the shipped reader ignores it and the new reader reads either build — but the lettered lines are only cited correctly after the rebuild.
 
 ## Latest deploy — 2026-09-03 (the /lemma pages mount grammata's T8 entry)
 

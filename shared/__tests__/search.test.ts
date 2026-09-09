@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { greekFold, search, searchGrammar } from '../lib/search';
+import { ENGLISH_HEAD_LIMIT, engPhraseMatches, greekFold, offsetRef, search, searchGrammar } from '../lib/search';
 
 const meta = [
   { id: 's1', book: 1, column: '1094a', greek_head: 'λόγος ἀρετή', english_head: 'virtue is a habit of choice' },
@@ -40,6 +40,8 @@ describe('greekFold', () => {
     ['*a)nqrwpos', 'anqrwpos'],
     ["ἀρετή'", "areth'"],
     ['ψυχή κόσμος', 'yuxhkosmos'],
+    ['δ’', "d'"],           // the page's elision mark, U+2019
+    ["δ'", "d'"],
   ])('folds %s', (input, expected) => {
     expect(greekFold(input)).toBe(expected);
   });
@@ -301,5 +303,171 @@ describe('searchGrammar', () => {
       return Promise.resolve({ ok: false, status: 404, json: async () => ({}) } as Response);
     });
     await expect(searchGrammar({ case: 'nom' }, ['TGMismatch'])).rejects.toThrow(/grammar index/);
+  });
+});
+
+describe('a phrase typed as it stands on the page, under the default lemma mode', () => {
+  beforeEach(() => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation((url) => {
+      const path = String(url);
+      if (path.endsWith('/meta.json')) return json(meta);
+      if (path.endsWith('/greek_lemma.json')) return json(greekIndex);
+      if (path.endsWith('/lemma-map/l.json')) return json({ logou: ['logos'], logos: ['logos', 'xlogos'] });
+      if (path.endsWith('/lemma-map/a.json')) return json({ areths: ['areth'] });
+      if (path.endsWith('/lemma-map/t.json')) return json({ texnh: ['texnh', 'logos'] });
+      return Promise.resolve({ ok: false, status: 404, json: async () => ({}) } as Response);
+    });
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  it('finds the run under the headwords the typed inflections belong to', async () => {
+    // logou and areths are not keys in the lemma index; the run "logos areth"
+    // stands at s1 positions 0–1. Matching only the typed fold found nothing
+    // and then told the reader the words never stand together.
+    const { results } = await search('logou areths', '', 'phrase', 'all', 'and', ['TPhraseInfl'], 'lemma');
+    expect(results.map((r) => [r.meta.id, r.grkPositions])).toEqual([['s1', [0, 1]]]);
+  });
+
+  it('under headword mode takes the keys as given and widens nothing', async () => {
+    // The lemma-map says the spelling "texnh" can also belong to logos (s1, s2).
+    // A typed word is widened; a picked headword key is exactly itself. (The
+    // lemma-map shards are cached for the module, so this uses a letter no
+    // earlier block loaded.)
+    const typed = await search('texnh', '', 'all', 'all', 'and', ['THeadTyped'], 'lemma');
+    expect(typed.results.map((r) => r.meta.id)).toEqual(['s1', 's2', 's3']);
+    const picked = await search('texnh', '', 'all', 'all', 'and', ['THeadPicked'], 'headword');
+    expect(picked.results.map((r) => r.meta.id)).toEqual(['s3']);
+  });
+});
+
+describe('engPhraseMatches', () => {
+  it.each([
+    ['the good', 'the good life', true],
+    ['the good', 'breathe goodness', false],        // substrings are not words
+    ['the good', 'to breathe good air', false],
+    ['virtue is', 'virtue is a habit', true],
+    ['virtue is', 'virtue, is it a habit', false],  // punctuation breaks the phrase
+    ['virtue is', 'virtue\n  is a habit', true],    // any whitespace joins it
+    ["aristotle's view", 'in aristotle’s view', true],
+    ['hap* virtue', 'happiness, virtue', false],
+    ['hap* virtue', 'happy virtue', true],
+    ['*ness of', 'the goodness of it', true],
+    ['go?d', 'the good life', true],
+    ['go?d', 'the gold life', true],
+    ['go?d', 'the god life', false],
+    ['first change', 'the first ‘change’ is', true],   // quote marks are not part of the word
+    ["aristotle's", "‘aristotle’s’ view", true],
+  ])('%s in %j → %s', (phrase, text, expected) => {
+    expect(engPhraseMatches(text, phrase.split(' '))).toBe(expected);
+  });
+});
+
+describe('an English phrase is an adjacency test over word positions', () => {
+  // stage6 keeps only the first 500 characters of a segment's English in
+  // meta.json; the postings carry every word with its position.
+  const filler = 'lorem ipsum '.repeat(60).slice(0, ENGLISH_HEAD_LIMIT);
+  const longMeta = [
+    { id: 'L1', book: 1, column: '1094a', greek_head: '', english_head: filler },
+    { id: 'L2', book: 1, column: '1094b', greek_head: '', english_head: 'virtue and a habit' },
+    { id: 'L3', book: 2, column: '1100a', greek_head: '', english_head: filler },
+  ];
+  // L1: "virtue habit" adjacent past the cut. L2: "virtue and a habit" — not
+  // adjacent. L3: "virtue and habit" past the cut — not adjacent.
+  const positional = {
+    virtue: [[0, 120], [1, 0], [2, 120]],
+    habit: [[0, 121], [1, 3], [2, 122]],
+    and: [[1, 1], [2, 121]],
+  };
+  const legacy = { virtue: [0, 1, 2], habit: [0, 1, 2], and: [1, 2] };
+  let books: string[];
+  const mock = (english: unknown) => {
+    books = [];
+    vi.spyOn(globalThis, 'fetch').mockImplementation((url) => {
+      const path = String(url);
+      if (path.endsWith('/meta.json')) return json(longMeta);
+      if (path.endsWith('/english.json')) return json(english);
+      if (/\/book-\d+\.json$/.test(path)) books.push(path);
+      return Promise.resolve({ ok: false, status: 404, json: async () => ({}) } as Response);
+    });
+  };
+  afterEach(() => vi.restoreAllMocks());
+
+  it('finds the phrase past the head from the postings, fetching no book', async () => {
+    mock(positional);
+    const { results } = await search('', 'virtue habit', 'all', 'phrase', 'and', ['TPosIndex']);
+    expect(results.map((r) => r.meta.id)).toEqual(['L1']);
+    expect(books).toEqual([]);
+  });
+
+  it('on an older build without positions checks the head and fetches nothing', async () => {
+    // The phrase past the cut is missed on such a build — the older limit,
+    // kept rather than fetching every candidate's whole book.
+    mock(legacy);
+    const { results } = await search('', 'virtue habit', 'all', 'phrase', 'and', ['TLegacyIndex']);
+    expect(results).toEqual([]);
+    expect(books).toEqual([]);
+  });
+});
+
+describe('an English word typed or pasted from the page', () => {
+  const quoteMeta = [
+    { id: 'Q1', book: 1, column: '1094a', greek_head: '', english_head: 'Aristotle’s first ‘change’ isn’t the last.' },
+  ];
+  // Keyed as stage6's english_words() keys them.
+  const index = { "aristotle's": [[0, 0]], first: [[0, 1]], change: [[0, 2]], "isn't": [[0, 3]], the: [[0, 4]], last: [[0, 5]] };
+  beforeEach(() => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation((url) => {
+      const path = String(url);
+      if (path.endsWith('/meta.json')) return json(quoteMeta);
+      if (path.endsWith('/english.json')) return json(index);
+      return Promise.resolve({ ok: false, status: 404, json: async () => ({}) } as Response);
+    });
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  it.each([
+    ['aristotle’s', 1],    // the page's U+2019
+    ["aristotle's", 1],
+    ['‘change’', 1],       // quote marks are not part of the word
+    ["'change'", 1],
+    ['aristotles', 0],
+  ])('%s → %i segment', async (q, n) => {
+    const { results } = await search('', q, 'all', 'all', 'and', ['TQuotes']);
+    expect(results).toHaveLength(n);
+  });
+
+  it('finds a phrase whose words the page prints with curly marks', async () => {
+    const { results } = await search('', 'first ‘change’ isn’t', 'all', 'phrase', 'and', ['TQuotesPhrase']);
+    expect(results.map((r) => r.meta.id)).toEqual(['Q1']);
+  });
+});
+
+describe('offsetRef names the line a token stands on', () => {
+  // stage6 writes [n, count], or [n, count, sub] on a lettered line. 244b runs
+  // 4, 5, 5a, 6 here: two tokens each.
+  const offsets = {
+    token_count: 8,
+    seg_base_offset: [0],
+    segments: [{
+      book: 7,
+      column: '244b',
+      line_runs: [[4, 2], [5, 2], [5, 2, 'a'], [6, 2]] as ([number, number] | [number, number, string])[],
+    }],
+    book_bounds: [{ book: 7, start: 0 }],
+    chapter_bounds: [],
+  };
+
+  it('carries the letter, so a token on 244b5a is not cited as 244b5', () => {
+    expect(offsetRef(offsets, 2)).toMatchObject({ column: '244b', line: 5 });
+    expect(offsetRef(offsets, 2)!.sub).toBeUndefined();
+    expect(offsetRef(offsets, 4)).toMatchObject({ column: '244b', line: 5, sub: 'a' });
+    expect(offsetRef(offsets, 5)).toMatchObject({ line: 5, sub: 'a' });
+    expect(offsetRef(offsets, 6)).toMatchObject({ line: 6 });
+  });
+
+  it('reads an older build, whose runs carry no letter', () => {
+    const older = { ...offsets, segments: [{ ...offsets.segments[0], line_runs: [[4, 2], [5, 2], [5, 2], [6, 2]] as [number, number][] }] };
+    expect(offsetRef(older, 4)).toMatchObject({ line: 5 });
+    expect(offsetRef(older, 4)!.sub).toBeUndefined();
   });
 });

@@ -72,4 +72,11 @@ describe('parseRouteHref', () => {
     expect(parseRouteHref('/glossary')).toEqual({ kind: 'swallow' });
     expect(parseRouteHref('')).toEqual({ kind: 'swallow' });
   });
+
+  it('never throws on a malformed percent-escape — a throw here lets the webview follow the link natively', () => {
+    expect(() => parseRouteHref('/lemma/%E0%A4')).not.toThrow();
+    expect(parseRouteHref('/lemma/%E0%A4')).toEqual({ kind: 'lemma', slug: '%E0%A4' });
+    expect(() => parseRouteHref('/EN/book/2#%E0')).not.toThrow();
+    expect(parseRouteHref('/EN/book/2#%E0')).toEqual({ kind: 'reader', work: 'EN', book: 2, params: { hash: '%E0' } });
+  });
 });

@@ -9,8 +9,9 @@
   import { tick } from 'svelte';
   import { CORPUS_GROUPS, dataId, type CorpusEntry } from '../lib/corpus';
   import { getWork, bookLabel, isBookless } from '@shared/lib/works';
-  import { fetchChapters, parseBekker, type ChapterRef } from '@shared/lib/data';
+  import { fetchChapters, type ChapterRef } from '@shared/lib/data';
   import { columnKey } from '../lib/translation-file';
+  import { parseCitation } from '@shared/lib/palette';
 
   export let currentWork: string;          // data id (works.ts id)
   export let currentBook: number;
@@ -82,19 +83,19 @@
 
   // ── live chapter highlight from the scroll-spy citation ────────────────────
   // Bekker works: the cite ("1097a15" or bare column "1097a") maps to the last
-  // chapter of the current book whose start position <= the cite's position.
-  // Non-Bekker works (busse): exact column match only.
+  // chapter of the current book whose start position <= the cite's position
+  // (parseCitation accepts 1–4 digit columns: Categories 1a–15b, De
+  // Interpretatione 16a–24b). Non-Bekker works (busse): exact column match only.
   const citePos = (column: string, line: number) => columnKey(column) * 1000 + line;
   $: activeChapter = ((): string | null => {
     if (!currentCite) return null;
     const list = chapters[String(currentBook)];
     if (!list?.length) return null;
-    const parsed = parseBekker(currentCite);
-    const bare = currentCite.match(/^(\d{3,4}[ab])$/);
-    if (!parsed && !bare) {
+    const cite = parseCitation(currentCite);
+    if (!cite) {
       return list.find(c => c.column === currentCite)?.chapter ?? null;
     }
-    const pos = parsed ? citePos(parsed.column, parsed.line) : citePos(bare![1], 1);
+    const pos = citePos(cite.column, cite.line ?? 1);
     let best: string | null = null;
     for (const c of list) {
       if (citePos(c.column, Number(c.line) || 1) <= pos) best = c.chapter;

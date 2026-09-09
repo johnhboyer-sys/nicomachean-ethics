@@ -141,6 +141,66 @@ export interface ChapterFile {
   paragraphStartsSanitized?: boolean;
 }
 
+/**
+ * How library/splitDocument.ts's rebase carries a field of a whole-document
+ * file into each Book/Chapter part. EVERY field of ChapterFile and
+ * ChapterFileMeta is classified here, and the `satisfies` clauses make tsc
+ * refuse a new field until it is: rebase hand-listed its sections and twice
+ * shipped without one (englishParaLines, then headingTitleLines and rowRefs),
+ * each time printing the wrong text or refusing the part at round-trip.
+ *
+ *   'per-row'           an array with one entry per row, in row order, that a
+ *                       file always carries; a part takes its slice
+ *   'per-row-optional'  the same, but the section rides along only when some
+ *                       row of the slice is non-empty (serializeChapterFile
+ *                       omits an all-empty optional section, so carrying one
+ *                       would give the part a phantom section at round-trip)
+ *   'by-ordinal'        entries name rows by 1-based ordinal (or, for
+ *                       line_splits, by address); rebase filters and re-bases
+ *                       them BY NAME, because each has its own shape
+ *   'whole'             not row-shaped: copied, set per part (book, chapter),
+ *                       re-derived (spans), scoped by marker (footnotes), or
+ *                       parse-only and never written
+ *
+ * rebase slices every 'per-row' / 'per-row-optional' field generically from
+ * these tables, in this declaration order.
+ */
+export type RebaseRule = 'per-row' | 'per-row-optional' | 'by-ordinal' | 'whole';
+
+export const CHAPTER_FILE_RULES = {
+  meta: 'whole',
+  greekLines: 'per-row',
+  englishLines: 'per-row',
+  englishParaLines: 'per-row-optional',
+  headingTitleLines: 'per-row-optional',
+  footnotes: 'whole',
+  paragraphStartsSanitized: 'whole',
+} as const satisfies Record<keyof ChapterFile, RebaseRule>;
+
+export const CHAPTER_FILE_META_RULES = {
+  schemaVersion: 'whole',
+  work: 'whole',
+  book: 'whole',
+  chapter: 'whole',
+  citationScheme: 'whole',
+  spanStart: 'whole',
+  spanEnd: 'whole',
+  columnStarts: 'whole',
+  rowRefs: 'per-row-optional',
+  lineSplits: 'by-ordinal',
+  paragraphStarts: 'by-ordinal',
+  headers: 'by-ordinal',
+} as const satisfies Record<keyof ChapterFileMeta, RebaseRule>;
+
+export function isPerRowRule(rule: RebaseRule): boolean {
+  return rule === 'per-row' || rule === 'per-row-optional';
+}
+
+/** The keys of T whose rule in R is one of the per-row kinds. */
+export type PerRowKeys<T, R extends Record<keyof T, RebaseRule>> = {
+  [K in keyof T]-?: R[K] extends 'per-row' | 'per-row-optional' ? K : never;
+}[keyof T];
+
 /** Thrown by parseChapterFile on any validation failure. Message is plain-language and line-numbered where applicable. */
 export class ChapterFileError extends Error {
   constructor(message: string) {

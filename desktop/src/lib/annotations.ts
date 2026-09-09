@@ -60,17 +60,43 @@ export const PALETTE: AnnColor[] = ['yellow', 'green', 'pink', 'blue', 'purple',
 
 // ── storage ──────────────────────────────────────────────────────────────────
 
-import { isTauri } from './runtime';
+import { isTauri, errorText, atomicWriteText } from './runtime';
+import { memoAsync } from '@shared/lib/memo';
+
+interface AnnRead {
+  anns: Annotation[];
+  /** Set when the stored file exists but cannot be read as a list of
+   *  annotations — the work is then read-only until it is repaired. */
+  problem?: string;
+}
 
 interface AnnStore {
-  read(work: string): Promise<Annotation[]>;
+  read(work: string): Promise<AnnRead>;
   write(work: string, anns: Annotation[]): Promise<void>;
+}
+
+function parseAnnotations(raw: string): Annotation[] {
+  const parsed: unknown = JSON.parse(raw);
+  if (!Array.isArray(parsed)) throw new Error('not a list of annotations');
+  return parsed as Annotation[];
+}
+
+// An unreadable file used to read as an empty list — and the next highlight
+// then wrote that one-item list over the top of every annotation the user
+// had for the work. Now the file is left exactly as it is, hidden, and
+// writes for that work are refused with this sentence.
+function readProblem(where: string, e: unknown): string {
+  return `The annotations file for this work could not be read (${errorText(e)}). Its highlights and notes are hidden `
+    + `and new ones cannot be saved until it is repaired or moved: ${where}.`;
 }
 
 const browserStore: AnnStore = {
   async read(work) {
-    try { return JSON.parse(localStorage.getItem(`annotations:${work}`) ?? '[]'); }
-    catch { return []; }
+    const key = `annotations:${work}`;
+    const raw = localStorage.getItem(key);
+    if (raw === null) return { anns: [] };
+    try { return { anns: parseAnnotations(raw) }; }
+    catch (e) { return { anns: [], problem: readProblem(`localStorage key ${key}`, e) }; }
   },
   async write(work, anns) {
     localStorage.setItem(`annotations:${work}`, JSON.stringify(anns));
@@ -83,45 +109,65 @@ async function tauriStore(): Promise<AnnStore> {
   const dir = await join(await appDataDir(), 'annotations');
   return {
     async read(work) {
-      try { return JSON.parse(await fs.readTextFile(await join(dir, `${work}.json`))); }
-      catch { return []; }
+      const path = await join(dir, `${work}.json`);
+      if (!(await fs.exists(path))) return { anns: [] };
+      try { return { anns: parseAnnotations(await fs.readTextFile(path)) }; }
+      catch (e) { return { anns: [], problem: readProblem(path, e) }; }
     },
+    // Write-then-rename, so a crash mid-write can never leave a truncated
+    // file where the user's annotations were.
     async write(work, anns) {
       await fs.mkdir(dir, { recursive: true });
-      await fs.writeTextFile(await join(dir, `${work}.json`), JSON.stringify(anns, null, 1));
+      await atomicWriteText(fs, await join(dir, `${work}.json`), JSON.stringify(anns, null, 1));
     },
   };
 }
 
-let _store: Promise<AnnStore> | null = null;
-const store = () => (_store ??= isTauri() ? tauriStore() : Promise.resolve(browserStore));
+// A failed handle is never cached (see memoAsync()).
+const store = memoAsync<AnnStore>(() => (isTauri() ? tauriStore() : Promise.resolve(browserStore)));
 
-const _cache = new Map<string, Annotation[]>();
+const _cache = new Map<string, AnnRead>();
 
-export async function listAnnotations(work: string): Promise<Annotation[]> {
+async function entryFor(work: string): Promise<AnnRead> {
   if (!_cache.has(work)) _cache.set(work, await (await store()).read(work));
   return _cache.get(work)!;
 }
 
+export async function listAnnotations(work: string): Promise<Annotation[]> {
+  return (await entryFor(work)).anns;
+}
+
+/** Why this work's annotations are read-only (its file could not be read),
+ *  or null. Meaningful once listAnnotations(work) has run. */
+export function annotationsProblem(work: string): string | null {
+  return _cache.get(work)?.problem ?? null;
+}
+
+/** Persist the list `mutate` derives from the work's current one; a mutator
+ *  returning null declines (nothing written). A work whose file could not be
+ *  read refuses every write. The in-memory list changes only after the write
+ *  succeeded, so a failed save is never shown as saved. */
+async function commit(work: string, mutate: (anns: Annotation[]) => Annotation[] | null): Promise<void> {
+  const entry = await entryFor(work);
+  if (entry.problem) throw new Error(entry.problem);
+  const next = mutate(entry.anns);
+  if (!next) return;
+  await (await store()).write(work, next);
+  entry.anns = next;
+}
+
 export async function addAnnotation(a: Annotation): Promise<void> {
-  const anns = await listAnnotations(a.work);
-  anns.push(a);
-  await (await store()).write(a.work, anns);
+  await commit(a.work, anns => [...anns, a]);
 }
 
+/** Unknown ids are a silent no-op. */
 export async function updateAnnotation(work: string, id: string, body: string): Promise<void> {
-  const anns = await listAnnotations(work);
-  const a = anns.find(x => x.id === id);
-  if (!a) return;
-  a.body = body;
-  await (await store()).write(work, anns);
+  await commit(work, anns => (anns.some(x => x.id === id) ? anns.map(x => (x.id === id ? { ...x, body } : x)) : null));
 }
 
+/** Unknown ids are a silent no-op. */
 export async function deleteAnnotation(work: string, id: string): Promise<void> {
-  const anns = await listAnnotations(work);
-  const i = anns.findIndex(x => x.id === id);
-  if (i >= 0) anns.splice(i, 1);
-  await (await store()).write(work, anns);
+  await commit(work, anns => (anns.some(x => x.id === id) ? anns.filter(x => x.id !== id) : null));
 }
 
 export function newId(): string {

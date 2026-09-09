@@ -67,6 +67,7 @@
  */
 
 import yaml from 'js-yaml';
+import { normalizeText } from './text';
 import type { SchemeId } from '../citation/types';
 import { getScheme, isKnownScheme } from '../citation/registry';
 import type { ChapterFile, ChapterFileMeta, ColumnStart, Footnote, HeaderMark, LineSplit, RowHeaderLevel } from './types';
@@ -83,12 +84,27 @@ const SUPPORTED_SCHEMA_VERSION = 1;
 
 const FRONTMATTER_RE = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/;
 const FOOTNOTE_ENTRY_RE = /^(\d+):[ \t](.*)$/;
+
+/**
+ * A footnote body's continuation lines are written verbatim, which leaves one
+ * ambiguity: a line the body itself starts with "N: " reads back as a NEW
+ * entry — footnote 1's "See below.\n2: not a note" became two footnotes, and
+ * when a real footnote 2 followed, a duplicate id that refused the whole file.
+ * Such a line (and, so the escape itself stays unambiguous, one that begins
+ * with a backslash) is written with a leading backslash; the parser strips
+ * exactly one from every continuation line that carries it. Files written
+ * before this carry no leading backslash unless the body really began with
+ * one, which no footnote in the library does.
+ */
+function escapeFootnoteContinuation(line: string): string {
+  return FOOTNOTE_ENTRY_RE.test(line) || line.startsWith('\\') ? `\\${line}` : line;
+}
+
+function unescapeFootnoteContinuation(line: string): string {
+  return line.startsWith('\\') ? line.slice(1) : line;
+}
 const SECTION_HEADERS = ['[GREEK]', '[ENGLISH]', '[ENGLISH.PARA]', '[HEADING_TITLES]', '[FOOTNOTES]'] as const;
 type SectionHeader = (typeof SECTION_HEADERS)[number];
-
-function normalizeLineEndings(raw: string): string {
-  return raw.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-}
 
 /**
  * Fold Unicode U+2028 LINE SEPARATOR / U+2029 PARAGRAPH SEPARATOR to a real
@@ -476,6 +492,9 @@ function parseFrontmatter(
       `${source}: This chapter was saved by a newer version of the app — update the app to open it.`,
     );
   }
+  // A file written before `work` was quoted carries a bare slug; an all-digit
+  // slug came back from YAML as a number. Its digits ARE the id.
+  if (typeof v['work'] === 'number' && Number.isInteger(v['work'])) v['work'] = String(v['work']);
   const work = requireString('work');
   const book = requireInt('book');
   const chapter = requireInt('chapter');
@@ -643,7 +662,7 @@ function parseFootnotes(lines: string[], sectionStartLine: number, source: strin
           `${source}: line ${lineNo}: footnote continuation line before any "N: " entry: ${JSON.stringify(line)}`
         );
       }
-      current.body += `\n${line}`;
+      current.body += `\n${unescapeFootnoteContinuation(line)}`;
     }
   }
 
@@ -664,7 +683,7 @@ function parseFootnotes(lines: string[], sectionStartLine: number, source: strin
 // ── entry points ─────────────────────────────────────────────────────────────
 
 export function parseChapterFile(raw: string, source = '<chapterfile>'): ChapterFile {
-  const normalized = normalizeLineEndings(raw);
+  const normalized = normalizeText(raw);
   const { meta, rest, columnStartsLine, rowRefsLine, paragraphStartsSanitized } = parseFrontmatter(normalized, source);
   const sections = splitSections(rest, source);
 
@@ -787,11 +806,27 @@ export function rowAddress(meta: ChapterFileMeta, rowIndex: number): string {
   return `${split.column}${split.line + (rowIndex - segment.rowIndex)}`;
 }
 
+/**
+ * A work id is written bare when YAML reads it back as the same string, and
+ * double-quoted otherwise. A slug that happens to be all digits ("1984") or a
+ * YAML word ("true", "null") would come back as a number or a boolean, fail
+ * the string check, and leave a file that cannot open; every other id keeps
+ * the bare form existing files carry, so nothing is rewritten for its sake.
+ */
+function yamlPlainOrQuoted(value: string): string {
+  try {
+    if (yaml.load(value) === value) return value;
+  } catch {
+    // fall through to the quoted form
+  }
+  return JSON.stringify(value);
+}
+
 function serializeFrontmatter(meta: ChapterFileMeta): string {
   const lines = [
     '---',
     `schema_version: ${meta.schemaVersion}`,
-    `work: ${meta.work}`,
+    `work: ${yamlPlainOrQuoted(meta.work)}`,
     `book: ${meta.book}`,
     `chapter: ${meta.chapter}`,
     `citation_scheme: ${meta.citationScheme}`,
@@ -887,7 +922,7 @@ export function serializeChapterFile(doc: ChapterFile): string {
     for (const fn of doc.footnotes) {
       const bodyLines = normalizeFootnoteSeparators(fn.body).split('\n');
       parts.push(`${fn.id}: ${bodyLines[0]}`);
-      parts.push(...bodyLines.slice(1));
+      parts.push(...bodyLines.slice(1).map(escapeFootnoteContinuation));
     }
   }
 

@@ -15,6 +15,7 @@ import {
 import { SUPPORT_URL } from '../lib/support';
 import { sanitizeHtml } from '../lib/html';
 import { jsonLdSafe } from '../lib/jsonld';
+import { bookSpan as bookSpanLabel, translatorName } from '../lib/nav';
 import '@shared/styles/global.css';
 import CommandPalette from '@shared/components/CommandPalette.svelte';
 
@@ -38,19 +39,14 @@ const outline: BookOutline[] = Array.from({ length: work.books }, (_, i) => {
   return { book: b, label: bookLabel(work, b), chapters: allChapters[String(b)] ?? [] };
 });
 const totalChapters = outline.reduce((n, b) => n + b.chapters.length, 0);
-// "N chapters · <Bekker start>–<Bekker end>" for a book's row on the landing.
-const bookSpan = (b: BookOutline) => {
-  const n = b.chapters.length;
-  const first = b.chapters[0]?.bekker.split('–')[0] ?? '';
-  const last = b.chapters.at(-1)?.bekker.split('–').at(-1) ?? '';
-  const range = first && last ? ` · ${first}–${last}` : '';
-  return `${n} chapter${n === 1 ? '' : 's'}${range}`;
-};
+// "N chapters · <Bekker start>–<Bekker end>" for a book's row on the landing
+// (../lib/nav).
+const bookSpan = (b: BookOutline) => bookSpanLabel(b.chapters);
 
 const editions = visibleTranslations(work);
 const primary = editions.find((t) => t.id === work.defaultTranslation)
   ?? editions.find((t) => t.slot === 'english') ?? editions[0];
-const translatorNames = editions.map((t) => t.name.split(' (')[0]);
+const translatorNames = editions.map((t) => translatorName(t.name));
 const commentaries = (work.commentaries ?? [])
   .map((id) => getWork(id))
   .filter((w): w is NonNullable<typeof w> => Boolean(w));

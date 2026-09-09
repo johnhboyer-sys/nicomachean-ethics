@@ -1,10 +1,11 @@
 <script lang="ts">
   import { onMount, onDestroy, tick } from 'svelte';
   import { fade } from 'svelte/transition';
-  import { fetchBook, parseBekker, fetchSidenotes, fetchFigures, fetchQuotations, type Segment, type GreekLine, type Token, type BookData, type OverlayPiece, type Quotation } from '../lib/data';
+  import { fetchBook, parseBekker, lineAnchor, lineRef, nearestLineAnchor, fetchSidenotes, fetchFigures, fetchQuotations, type Segment, type GreekLine, type Token, type BookData, type OverlayPiece, type Quotation } from '../lib/data';
   import { greekFold } from '../lib/search';
   import { measureGreekTrack as measureTrack } from '../lib/greek-track';
   import { highlightPrefixMatches } from '../lib/text';
+  import { sanitizeHtml } from '../lib/html';
   import { lineParts, cellParts, locateToken, type LinePart } from '../lib/line-parts';
   import { getWork, visibleTranslations, bookLabel as workBookLabel, type TranslationRef } from '../lib/works';
   import { touchRecent } from '../lib/resume';
@@ -513,9 +514,9 @@
   // Open at a Bekker citation from the URL hash: the exact Greek line if it's
   // present and visible, otherwise the owning column. Instant (no animation) so
   // it doesn't stream scroll-events, and suppressed so it doesn't self-arm.
-  function scrollToCitation(column: string, line: number) {
+  function scrollToCitation(column: string, line: number, sub?: string) {
     suppressArmUntil = Date.now() + 800;
-    const lineEl = document.getElementById(`L${column}-${line}`);
+    const lineEl = document.getElementById(lineAnchor(column, line, sub));
     if (lineEl && (lineEl as HTMLElement).offsetParent !== null) {
       lineEl.scrollIntoView({ behavior: 'auto', block: 'center' });
     } else {
@@ -963,7 +964,9 @@
     if (loc) {
       const [col, ln] = loc.split(':');
       locCol = col;
-      locLine = Number(ln);
+      // A lettered line arrives as "5a": the id keeps the letter, and the
+      // nearest-line fallback below reads the number in front of it.
+      locLine = parseInt(ln, 10);
       targetId = `L${col}-${ln}`;
     }
     // Restore saved view, but a jump-in (loc/highlight) forces bilingual so the
@@ -1014,25 +1017,24 @@
           // Snap to the nearest existing line in the column if the exact
           // citation line isn't a Greek line break (e.g. mid-line citations).
           if (!el && locCol && !Number.isNaN(locLine)) {
+            // nearestLineAnchor sees lettered lines. Matching /-(\d+)$/ here
+            // did not: GA 775a prints 11a/11b/11c and no bare 11, so a
+            // citation of "775a11" skipped the whole group and snapped back to
+            // line 10 — a confidently wrong line, which is worse than none.
             const seg = document.getElementById(`col-${locCol}`);
-            let best: Element | null = null;
-            let bestDist = Infinity;
-            seg?.querySelectorAll('.greek-line').forEach((node) => {
-              const m = node.id.match(/-(\d+)$/);
-              if (!m) return;
-              const d = Math.abs(Number(m[1]) - locLine);
-              if (d < bestDist) { bestDist = d; best = node; }
-            });
-            if (best) { el = best as HTMLElement; targetId = (best as HTMLElement).id; }
+            const ids = [...(seg?.querySelectorAll('.greek-line') ?? [])].map((n) => n.id);
+            const near = nearestLineAnchor(ids, locCol, locLine);
+            const bestEl = near ? document.getElementById(near) : null;
+            if (bestEl) { el = bestEl; targetId = near as string; }
           }
           if (el) { suppressArmUntil = Date.now() + 1500; el.scrollIntoView({ behavior: 'smooth', block: 'center' }); }
         } else if (hash) {
           const ref = parseBekker(hash);
           if (ref) {
-            scrollToCitation(ref.column, ref.line);
-            lastCite = `${ref.column}${ref.line}`;
+            scrollToCitation(ref.column, ref.line, ref.sub);
+            lastCite = `${ref.column}${lineRef(ref.line, ref.sub)}`;
             // Tint the cited line so a shared link makes the passage obvious.
-            targetId = `L${ref.column}-${ref.line}`;
+            targetId = lineAnchor(ref.column, ref.line, ref.sub);
           } else {
             // Column-level citations (the scroll-spy writes bare "#1107a" when
             // the Greek column is hidden) target the segment element col-<col>.
@@ -1121,8 +1123,11 @@
 
   // Show line number only for multiples of 5 (and line 1). Suppressed entirely
   // for non-Bekker works whose synthetic line numbers aren't meaningful.
-  function showLineNum(n: number): string {
+  function showLineNum(n: number, sub?: string): string {
     if (hideLineNums) return '';
+    // A lettered line always prints its own number: it is the second line
+    // called 5 in that column, and an unlabelled one reads as a stray.
+    if (sub) return lineRef(n, sub);
     if (n === 1 || n % 5 === 0) return String(n);
     return '';
   }
@@ -1448,8 +1453,8 @@
                   <!-- Greek inline table (the TLG ⎪ column square, e.g. De Int 22a). -->
                   <table class="greek-table"><tbody>
                     {#each item.rows as row}
-                      <tr id={`L${seg.column}-${row.n}`} class:target={targetId === `L${seg.column}-${row.n}`}>
-                        <td class="line-num">{showLineNum(row.n)}</td>
+                      <tr id={lineAnchor(seg.column, row.n, row.sub)} class:target={targetId === lineAnchor(seg.column, row.n, row.sub)}>
+                        <td class="line-num">{showLineNum(row.n, row.sub)}</td>
                         {#each (row.cells ?? []) as cell}
                           <td class="line-text" lang="grc">{@render greekToks(cellParts(cell))}</td>
                         {/each}
@@ -1457,12 +1462,16 @@
                     {/each}
                   </tbody></table>
                 {:else}
-                  <div class="greek-line" id={item.line.cont ? `L${seg.column}-${item.line.n}-c` : `L${seg.column}-${item.line.n}`} class:target={!item.line.cont && targetId === `L${seg.column}-${item.line.n}`} class:cont={item.line.cont}>
-                    <span class="line-num">{item.line.cont ? '' : showLineNum(item.line.n)}</span>
+                  <div class="greek-line" id={item.line.cont ? `${lineAnchor(seg.column, item.line.n, item.line.sub)}-c` : lineAnchor(seg.column, item.line.n, item.line.sub)} class:target={!item.line.cont && targetId === lineAnchor(seg.column, item.line.n, item.line.sub)} class:cont={item.line.cont}>
+                    <span class="line-num">{item.line.cont ? '' : showLineNum(item.line.n, item.line.sub)}</span>
                     <!-- The siglum sits in the margin at the gutter's edge; when the
                          line also carries a Bekker number, it slides left of it —
                          the number never yields its slot. -->
-                    {#if !item.line.cont && quoteStarts.has(`${seg.column}:${item.line.n}`)}
+                    <!-- A quotation's `lo` is a bare line number, so it belongs
+                         to the unlettered line: without the `sub` guard a
+                         quotation starting at 244b5 drew its sigla twice, once
+                         on 5 and again on 5a. -->
+                    {#if !item.line.cont && !item.line.sub && quoteStarts.has(`${seg.column}:${item.line.n}`)}
                       <span class="quotation-sigla" class:has-num={showLineNum(item.line.n) !== ''}>
                         {#each quoteStarts.get(`${seg.column}:${item.line.n}`) ?? [] as q}
                           <QuotationMarker quotation={q} />
@@ -1481,10 +1490,12 @@
             <div class="english-col" data-trans={trans === 'compare' ? compareLeft : trans}>
               {#if trans === 'compare'}<div class="col-label">{transById(compareLeft)?.short ?? 'English'}</div>{/if}
               {@render transFlow(block, trans === 'compare' ? compareLeft : trans)}
-              <!-- Inline diagrams ([[figN]] markers), e.g. the Tree of Porphyry. -->
+              <!-- Inline diagrams ([[figN]] markers), e.g. the Tree of Porphyry.
+                   Corpus HTML like a footnote, so it takes the same sanitizer
+                   the footnote and endnote panels apply before {@html}. -->
               {#if busse && view !== 'greek' && block.figs.length}
                 {#each block.figs as fig}
-                  {#if figuresData[String(fig)]}<!-- eslint-disable-next-line svelte/no-at-html-tags -->{@html figuresData[String(fig)]}{/if}
+                  {#if figuresData[String(fig)]}<!-- eslint-disable-next-line svelte/no-at-html-tags -->{@html sanitizeHtml(figuresData[String(fig)])}{/if}
                 {/each}
               {/if}
             </div>

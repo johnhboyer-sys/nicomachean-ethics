@@ -296,6 +296,19 @@ def _validate_emitted_manifest(manifest: WorkManifest, emitted: Any, problems: l
         return
     if work.get("id") != manifest.work_id:
         problems.append((manifest.work_id, "manifest.json", f"work.id {work.get('id')!r} does not match manifest"))
+    # stage7 copies the manifest's `work` block into manifest.json, so the
+    # translation named there is the one the books and search index were
+    # built from. A public manifest can swap the PRIMARY translation (Meta,
+    # Pol: Loeb -> Ross/Jowett), which the slot-based gating check below never
+    # sees — so a data dir emitted from the private manifest passed against
+    # the public one with the gated prose in every book.
+    expected = manifest.data.get("work") if isinstance(manifest.data.get("work"), dict) else {}
+    emitted_name = work.get("english_translation")
+    wanted_name = expected.get("english_translation")
+    if wanted_name and emitted_name != wanted_name:
+        problems.append((manifest.work_id, "manifest.json",
+                         f"work.english_translation {emitted_name!r} does not match the selected "
+                         f"manifest's {wanted_name!r} — the data was emitted from a different manifest"))
 
 
 def _validate_books(

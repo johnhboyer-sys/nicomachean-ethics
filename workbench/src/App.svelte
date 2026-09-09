@@ -457,6 +457,14 @@
     importOpen = false;
     await refreshLibraryStatus();
     select(workId, book, chapter);
+    // The import may have REPLACED the chapter that is already open. Its
+    // locus hasn't changed, so the editor doesn't remount: it still holds the
+    // pre-import model, and its next autosave would write that back over the
+    // file just imported. This is the same check the window-focus path runs —
+    // it reloads the editor from disk, or asks first when there are unsaved
+    // edits. A no-op for any other chapter.
+    await tick();
+    await syncCommands.checkExternalChange();
   }
 
   function toggleRail() {
@@ -849,6 +857,7 @@
       works={works.filter((w) => !isDocumentWork(w) && !corpora[w.id])}
       onClose={() => (addWorkOpen = false)}
       onOnboarded={handleOnboarded}
+      onImportSource={() => (sourceImportOpen = true)}
     />
   {/if}
 

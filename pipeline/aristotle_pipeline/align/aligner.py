@@ -172,10 +172,27 @@ def _flag_proper_names(ch, anchors, refs):
 
 # ---- guards + driver ------------------------------------------------------
 def check_roundtrip(ch: ChapterRef, anchors: list[Anchor]):
-    pts = sorted(a.offset for a in anchors)
-    pts = [p for p in pts if 0 <= p <= len(ch.ross_text)]
-    segs = [ch.ross_text[i:j] for i, j in zip([0] + pts, pts + [len(ch.ross_text)])]
-    assert "".join(segs) == ch.ross_text, f"round-trip failed in {ch.book}:{ch.chapter}"
+    """Every anchor must be a usable cut point in this chapter's prose.
+
+    Take the offsets in the order align_chapter emits them. Sorting them first
+    and filtering out-of-range ones (as this did) makes the round-trip assert
+    vacuous: slicing a string at ANY sorted, in-range list of points and
+    re-joining always reproduces it. The two repairs were precisely the two
+    corruptions worth catching — an override placed past the end of the prose
+    (a map built against a different parse of the translation) and an anchor
+    that regressed behind its predecessor.
+    """
+    n = len(ch.ross_text)
+    where = f"{ch.book}:{ch.chapter}"
+    bad = [(a.citation, a.offset) for a in anchors if not 0 <= a.offset <= n]
+    assert not bad, f"offset outside {where} prose (0..{n}): {bad[:5]}"
+    pts = [a.offset for a in anchors]
+    assert pts == sorted(pts), (
+        f"anchors out of order in {where}: "
+        f"{[(a.citation, a.offset) for a in anchors][:8]}"
+    )
+    segs = [ch.ross_text[i:j] for i, j in zip([0] + pts, pts + [n])]
+    assert "".join(segs) == ch.ross_text, f"round-trip failed in {where}"
 
 
 def align(work_id="EN", version_id=None, target_prose=None, backend="lexical",

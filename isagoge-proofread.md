@@ -1,5 +1,7 @@
 # Isagoge (Owen / Wikisource) — proofreading
 
+Applied to sources/isa-owen/book-01.html (verified 2026-09-07); kept as the record.
+
 Found by diffing our Wikisource transcription against the Logic Museum's independent Owen text.
 All are OCR errors in **our** text (Logic Museum has the correct reading), except the last (your call).
 

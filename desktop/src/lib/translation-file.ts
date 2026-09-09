@@ -55,6 +55,12 @@
 //      (offsets into fnText, measured as `clean.length` at each removal,
 //      exactly like scanTags's own offset bookkeeping) + emphRanges2
 //      (emphRanges rebased through the marker strip — ONE extra carry)
+//   3b. collapseBlankRuns(fnText) — a line the two strips emptied out (a
+//      `* * *` separator of stray markers, a marker alone on its line) is
+//      a new blank run; collapse it HERE, carrying emphasis and marker
+//      offsets through the same collapse, so scanTags never re-normalizes
+//      text after offsets were measured in it. Also the last point at which
+//      line endings matter: CRLF was already folded to LF in step 0.
 //   4. scanTags(fnText) → { text, tags } + emphasis(final) = rebase
 //      emphRanges2 through the tag strip (second carry) + markers(final) =
 //      rebase markers through the tag strip (its only carry) — reusing the
@@ -152,6 +158,10 @@ export function slugId(translator: string, work: string): string {
 // ── frontmatter ─────────────────────────────────────────────────────────────
 
 function parseFrontmatter(raw: string): { meta: Partial<TranslationMeta>; body: string; has: boolean } {
+  // A UTF-8 byte-order mark (Windows Notepad, some OCR exports) sits before
+  // the opening `---`; left in place it defeats the `^---` match and the whole
+  // header is read as body prose.
+  raw = raw.replace(/^\uFEFF/, '');
   const m = raw.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?/);
   if (!m) return { meta: {}, body: raw, has: false };
   const meta: Record<string, string> = {};
@@ -176,7 +186,7 @@ function parseFrontmatter(raw: string): { meta: Partial<TranslationMeta>; body: 
   if (meta.id) out.id = meta.id;
   if (meta.citation) out.citation = meta.citation;
   if (meta.noTicks) {
-    const refs = meta.noTicks.split(/\s+/).filter(Boolean);
+    const refs = meta.noTicks.split(/[\s,]+/).filter(Boolean);
     if (refs.length) out.noTicks = refs;
   }
   return { meta: out, body: raw.slice(m[0].length), has: true };
@@ -366,8 +376,46 @@ function normalizeParagraphBreaks(body: string): string {
   return body.replace(BLANK_RUN, '\n');
 }
 
+// CRLF (and bare CR) line endings become LF before any scanning: BLANK_RUN
+// only knows `\n`, so a Windows-saved file otherwise keeps every blank line
+// (double paragraph breaks in the reader) and carries a `\r` into the clean
+// text of every line — where the aligner's word snapping treats it as a
+// letter. Done in parseTranslationFile / emphasisScanInput, never in
+// parseFrontmatter: import-preclean.ts measures its frontmatter prefix as a
+// byte length of the raw upload, which must stay exact.
+function normalizeLineEndings(body: string): string {
+  return body.replace(/\r\n?/g, '\n');
+}
+
+/**
+ * Collapse blank-line runs that an earlier removal pass opened up (a
+ * Gutenberg `* * *` separator whose asterisks were stray emphasis markers
+ * leaves a whitespace-only line behind) and carry a set of offsets measured
+ * in `text` into the collapsed text's space. An offset inside a collapsed
+ * run lands just after the one `\n` that survives it. scanTags used to
+ * re-run normalizeParagraphBreaks on its own, silently shortening the text
+ * AFTER emphasis ranges and footnote markers had been measured — every
+ * offset after such a line then drifted by the characters removed.
+ */
+function collapseBlankRuns(text: string, offsets: number[]): { text: string; offsets: number[] } {
+  const runs = [...text.matchAll(BLANK_RUN)];
+  if (!runs.length) return { text, offsets };
+  const rebased = offsets.map(off => {
+    let shift = 0;
+    for (const m of runs) {
+      const start = m.index!;
+      const end = start + m[0].length;
+      if (off >= end) { shift += m[0].length - 1; continue; }
+      if (off > start) return start - shift + 1;
+      break;
+    }
+    return off - shift;
+  });
+  return { text: text.replace(BLANK_RUN, '\n'), offsets: rebased };
+}
+
+/** Walks text whose paragraph breaks are already normalized (one `\n` each). */
 function scanTags(body: string): { text: string; tags: InlineTag[]; warnings: string[] } {
-  body = normalizeParagraphBreaks(body);
   const tags: InlineTag[] = [];
   const warnings: string[] = [];
   let clean = '';
@@ -449,7 +497,7 @@ function rebaseThroughRemoval(body: string, re: RegExp, offsets: number[]): numb
  * would place at clean-text position P is rebased to that same P here.
  */
 function rebaseThroughTagStrip(body: string, offsets: number[]): number[] {
-  return rebaseThroughRemoval(normalizeParagraphBreaks(body), TAG, offsets);
+  return rebaseThroughRemoval(body, TAG, offsets);
 }
 
 // ── footnote markers (§B2) ──────────────────────────────────────────────────
@@ -556,7 +604,7 @@ export function emphasisScanInput(raw: string): string {
   // (including the §B1 footnote-block split, now run first there too), or a
   // file WITH a sentinel would hand the dialog different text than the
   // parser scans and the review-item indices would no longer line up.
-  return normalizeParagraphBreaks(splitFootnoteBlock(parseFrontmatter(raw).body).body);
+  return normalizeParagraphBreaks(splitFootnoteBlock(normalizeLineEndings(parseFrontmatter(raw).body)).body);
 }
 
 /**
@@ -584,7 +632,8 @@ export function parseTranslationFile(
   // §B1: slice the sentinel-delimited footnote block off the end FIRST — its
   // text never reaches normalizeParagraphBreaks/scanEmphasis/scanTags. A
   // legacy file with no sentinel passes rawBody through unchanged.
-  const { body: bodyBeforeFootnotes, footnotes, footnoteScope, noteRender, warnings: footnoteWarnings } = splitFootnoteBlock(rawBody);
+  const { body: bodyBeforeFootnotes, footnotes, footnoteScope, noteRender, warnings: footnoteWarnings } =
+    splitFootnoteBlock(normalizeLineEndings(rawBody));
   const body = normalizeParagraphBreaks(bodyBeforeFootnotes);
   const emphResult = scanEmphasis(body);
   let emphText = emphResult.text;      // {tag} and [^label] syntax still present, emphasis markers gone
@@ -601,10 +650,23 @@ export function parseTranslationFile(
   // marker glued next to a tag never shifts the tag's own offset arithmetic.
   // Emphasis ranges pick up their SECOND carry here (marker strip); markers
   // themselves are already in fnText-space and need none yet.
-  const { text: fnText, markers: rawMarkers } = scanFootnoteMarkers(emphText);
+  const { text: strippedText, markers: strippedMarkers } = scanFootnoteMarkers(emphText);
   const markerStripStarts = rebaseThroughMarkerStrip(emphText, emphRanges.map(r => r.start));
   const markerStripEnds = rebaseThroughMarkerStrip(emphText, emphRanges.map(r => r.end));
   emphRanges = emphRanges.map((r, i) => ({ ...r, start: markerStripStarts[i], end: markerStripEnds[i] }));
+  // Both strips can leave a whitespace-only line behind (a `* * *` separator,
+  // a marker alone on its line). Collapse those runs now, carrying every
+  // emphasis and marker offset through the same collapse, so scanTags walks
+  // final-shape text and no later offset drifts.
+  const collapsed = collapseBlankRuns(strippedText, [
+    ...emphRanges.map(r => r.start),
+    ...emphRanges.map(r => r.end),
+    ...strippedMarkers.map(m => m.offset),
+  ]);
+  const fnText = collapsed.text;
+  const n = emphRanges.length;
+  emphRanges = emphRanges.map((r, i) => ({ ...r, start: collapsed.offsets[i], end: collapsed.offsets[n + i] }));
+  const rawMarkers = strippedMarkers.map((m, i) => ({ ...m, offset: collapsed.offsets[2 * n + i] }));
   // scanTags strips {tag} syntax out of fnText, shifting every offset after
   // each tag — rebase the emphasis ranges (now in fnText-space) AND the
   // footnote-marker offsets (already in fnText-space, their only carry)
@@ -651,16 +713,23 @@ export function splitChapters(p: ParsedTranslation): {
   const chapters = chapterTags.map((ct, i) => {
     const start = ct.offset;
     const end = i + 1 < chapterTags.length ? chapterTags[i + 1].offset : p.text.length;
+    const slice = p.text.slice(start, end);
+    // A chapter tag typed on its own line (`{1.1}\nEvery art…`) leaves a
+    // leading `\n` the tag regex does not swallow; trimming it without
+    // rebasing put every offset in that chapter one character early.
+    const lead = slice.length - slice.trimStart().length;
+    const text = slice.trim();
+    const local = (offset: number) => Math.max(0, Math.min(offset - start - lead, text.length));
     return {
       book: ct.book!,
       chapter: ct.chapter!,
-      text: p.text.slice(start, end).trim(),
+      text,
       tags: p.tags
         .filter(t => t.kind !== 'chapter' && t.offset >= start && t.offset < end)
-        .map(t => ({ ...t, offset: Math.min(t.offset - start, end - start) })),
+        .map(t => ({ ...t, offset: local(t.offset) })),
       emphasis: p.emphasis
         .filter(e => e.start >= start && e.end <= end)
-        .map(e => ({ ...e, start: e.start - start, end: e.end - start })),
+        .map(e => ({ ...e, start: local(e.start), end: local(e.end) })),
       // §B3: sliced per chapter like tags/emphasis, same chapter-local offset
       // convention — but with a boundary rule of its own (Fix 2): a marker
       // is glued right after the word it annotates, so a marker sitting
@@ -677,7 +746,7 @@ export function splitChapters(p: ParsedTranslation): {
       // admits it explicitly.
       footnoteMarkers: p.footnoteMarkers
         .filter(m => (m.offset > start && m.offset <= end) || (i === 0 && m.offset === 0))
-        .map(m => ({ ...m, offset: Math.max(0, Math.min(m.offset - start, end - start)) })),
+        .map(m => ({ ...m, offset: local(m.offset) })),
     };
   });
   return { preamble, chapters };

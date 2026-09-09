@@ -16,6 +16,7 @@ import { normalizeFootnotes } from './ocr-repair/footnote-repair';
 import { repairSkeleton } from './ocr-repair/skeleton';
 import { slicePages } from './ocr-repair/slice';
 import { normalizeSpacing } from './ocr-repair/spacing';
+import { errorText } from './runtime';
 
 export type LayoutImportStage = 'slice' | 'skeleton' | 'spacing' | 'footnotes';
 
@@ -118,7 +119,7 @@ function publisherName(config: ResolvedLayoutImportConfig): string {
 }
 
 function userDetail(error: unknown, config: ResolvedLayoutImportConfig): string {
-  const detail = error instanceof Error ? error.message : String(error);
+  const detail = errorText(error);
   const boundary = /slice boundary not found for corpus "[^"]+" using pattern "([\s\S]+)"$/u.exec(detail);
   if (boundary) {
     return `${publisherName(config)} boundary pattern “${boundary[1]}” was not found.`;
@@ -154,7 +155,7 @@ function changeKind(change: ChangeRecord): string {
 }
 
 function sliceFailureField(config: ResolvedLayoutImportConfig, error: unknown): string {
-  const detail = error instanceof Error ? error.message : String(error);
+  const detail = errorText(error);
   if (config.slice?.backMatterStart && detail.includes(config.slice.backMatterStart)) {
     return 'slice.backMatterStart';
   }

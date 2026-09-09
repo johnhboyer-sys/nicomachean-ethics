@@ -1,6 +1,6 @@
 # HANDOFF: LSJ presentation
 
-Rewritten: 2026-09-01 midday; §1/§5 updated 2026-09-01 evening. This is the LSJ-track handoff for aristotle-reader.
+Rewritten: 2026-09-01 midday; §1/§5 updated 2026-09-01 evening; §0/§5 updated 2026-09-07 for the forms-block rules. This is the LSJ-track handoff for aristotle-reader.
 Rewrite it (don't append) when this track advances. Do not create a bare
 `HANDOFF.md` — see CLAUDE.md.
 
@@ -23,13 +23,20 @@ Consequences:
   which is offline-first and keeps the shards. `app/src/lib/html.ts`
   re-exports the sanitizer alone.
 - **§5's residual classes** (parenthesis openers 83, cross-references 38,
-  the two empty-label rows, the >22 path) are desktop-only concerns now. A
-  `proposed` variant implementing the first three was built for the
-  illustration and NOT kept; the illustration lived at
-  `app/src/pages/dev/lsj-compare.astro`, deleted. If the desktop ever wants
-  them, the rules are: a form inside an unclosed "(" is not a row; a lead
+  the two empty-label rows, the >22 path) are desktop-only concerns now. The
+  first three rules — a form inside an unclosed "(" is not a row; a lead
   ending in "for" is a cross-reference, prose; one row with an empty label
-  is prose.
+  is prose — are IMPLEMENTED in `buildFormsBlock` on
+  `claude/weekly-usage-catchup-h8go43` (2026-09-07), with nine tests, six of
+  which fail on the parent. **The corpus audit has NOT run**: that branch was
+  built in a container without `build/dist`. Before the desktop picks it up:
+  `node shared/scripts/audit-forms-block.mjs origin/main build/dist/lsj` —
+  the §3 audit, recreated as a script. Expect `tables lost` around 83 + 38 +
+  2 and `lost characters 0`; anything else is a finding. Two calls the
+  audit should confirm: parenthesis depth counts from the start of the
+  preamble (an aside spanning LSJ's ";" stays one aside), and a parenthesized
+  citation declines its whole segment while a parenthesized Greek span is
+  skipped like a quantity mark. The >22 path is untouched.
 - The `.lsj-entry-page` styles and `outlineLsjSenses` have no site consumer;
   left in place for the desktop and the sibling readers.
 - The porting item in §5 (plato/homer forms-block repairs) stands only if
@@ -147,10 +154,11 @@ headline).
     clause"). Mostly want nothing; some are wrong labels of the deferred
     >22-path kind.
   - **Parenthesis openers, 83** — "ἀριθμός [ᾰ], (", "ἀντιτίθημι (pres. part.".
-    Probably want NO table opened on a parenthetical; John's design call.
+    Rule implemented 2026-09-07 (§0): no table opens inside an unclosed "(".
+    Audit pending on John's machine.
   - **Cross-references with no form, 38** — ἀναγκαίη, "Ep. and Ion, for
-    ἀνάγκη"; "διπλός, ή, όν, poet. for". Want to render as prose, no table;
-    John's design call.
+    ἀνάγκη"; "διπλός, ή, όν, poet. for". Rule implemented 2026-09-07 (§0): a
+    lead ending in "for" is prose. Audit pending.
   - **Quantity/bracket before the label, 23** — "ἀμβλύνω [ῡ], fut." (some of
     these DID fix in stage 2 where the last clause is vocabulary); κάτειμι's
     lacuna bracket stays correct as it stands.
@@ -164,9 +172,10 @@ headline).
   "heterocl. pl.", "impf. ἦγον, Ep. and Ion."). Gating it would change 228
   entries and needs its own audit; Grok suggested it for ἱδρόω and the "cf."
   rule was the right fix instead. Some of the 228 are wrong labels today.
-- **Rows with an empty label.** διδάσκαλος and ὅλος now OPEN on one (the row
-  was already there as row two; the "cf." rule removed row one). A table whose
-  only row has no label should probably not be a table.
+- **Rows with an empty label.** διδάσκαλος and ὅλος opened on one (the row
+  was already there as row two; the "cf." rule removed row one). Rule
+  implemented 2026-09-07 (§0): exactly one row with an empty label is prose.
+  Audit pending.
 - **"cf." followed by a mood before the citation** — θλίβω, "(cf. subj.
   ἐκφλῐβῇ Hp.)". `compared` tests "cf." flush against the citation, so this
   comparison is still a row, as it was before. One entry; the regex could

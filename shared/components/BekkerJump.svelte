@@ -1,12 +1,12 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
-  import { fetchColumns, parseBekker, resolveBekker, type ColumnRef } from '../lib/data';
+  import { fetchColumns, lineRef, parseBekker, resolveBekker, type ColumnRef } from '../lib/data';
   import { getWork, workPath } from '../lib/works';
 
   export let work: string = 'EN';
   // Navigation strategy: the site leaves this unset and navigates the tab;
   // the desktop shell passes a callback (a Tauri window has no URL routing).
-  export let onJump: ((book: number, column: string, line: number) => void) | null = null;
+  export let onJump: ((book: number, column: string, line: number, sub?: string) => void) | null = null;
   // Hosts that mount more than one instance per page must pass distinct ids
   // (the site's ReaderShell mounts two) or the label/input pairing collides.
   // Deterministic prop rather than a generated id: this component is
@@ -59,11 +59,13 @@
     }
     if (onJump) {
       closeBox();
-      onJump(book, ref.column, ref.line);
+      onJump(book, ref.column, ref.line, ref.sub);
       return;
     }
     // Same-tab navigation; the reader snaps to the nearest line if exact is absent.
-    window.location.href = `${import.meta.env.BASE_URL.replace(/\/$/, '')}${workPath(work, book)}?loc=${ref.column}:${ref.line}`;
+    // A typed "775a11a" parses its letter, so the citation must carry it too —
+    // dropping it here landed the reader on the unlettered line.
+    window.location.href = `${import.meta.env.BASE_URL.replace(/\/$/, '')}${workPath(work, book)}?loc=${ref.column}:${lineRef(ref.line, ref.sub)}`;
   }
 
   function onKey(e: KeyboardEvent) {

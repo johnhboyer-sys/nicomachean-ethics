@@ -21,7 +21,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; img-src 'self' asset: http://asset.localhost data: blob:; style-src 'self' 'unsafe-inline'; connect-src 'self' ipc: http://ipc.localhost asset: http://asset.localhost https://api.openai.com https://api.anthropic.com https://generativelanguage.googleapis.com https://raw.githubusercontent.com",
+      "csp": "default-src 'self'; base-uri 'self'; form-action 'self'; object-src 'none'; img-src 'self' asset: http://asset.localhost data: blob:; style-src 'self' 'unsafe-inline'; connect-src 'self' ipc: http://ipc.localhost asset: http://asset.localhost https://api.openai.com https://api.anthropic.com https://generativelanguage.googleapis.com https://raw.githubusercontent.com",
       "assetProtocol": {
         "enable": true,
         "scope": ["$APPDATA/corpus/**", "$RESOURCE/corpus/**"]

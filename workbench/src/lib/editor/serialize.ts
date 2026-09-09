@@ -396,6 +396,12 @@ export function encodeParaLine(markup: string): string {
     if (ch === '\\' && i + 1 < markup.length) {
       out += ch + markup[i + 1];
       i++;
+    } else if (ch === '\r') {
+      // A pasted Windows line ending. A raw CR in the section is read back as
+      // a line break of its own, and the row counts stop matching — the file
+      // then refuses to open. CRLF is one break; a lone CR is one break.
+      out += RETURN_SYMBOL;
+      if (markup[i + 1] === '\n') i++;
     } else if (ch === '\n') {
       out += RETURN_SYMBOL;
     } else if (ch === RETURN_SYMBOL) {

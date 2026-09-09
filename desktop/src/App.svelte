@@ -6,9 +6,10 @@
   // Reader needs no desktop-specific changes.
   import Reader from '@shared/components/Reader.svelte';
   import { getWork, bookLabel, visibleTranslations } from '@shared/lib/works';
-  import { parseBekker, invalidateBookCache } from '@shared/lib/data';
+  import { invalidateBookCache, lineRef } from '@shared/lib/data';
+  import { parseCitation } from '@shared/lib/palette';
   import { entryByDataId } from './lib/corpus';
-  import { isTauri, type DataLayerInfo } from './lib/runtime';
+  import { isTauri, errorText, type DataLayerInfo } from './lib/runtime';
   import LibraryRail from './components/LibraryRail.svelte';
   import BekkerJump from '@shared/components/BekkerJump.svelte';
   import ThemeToggle from './components/ThemeToggle.svelte';
@@ -23,13 +24,14 @@
   import { exportLibrary, openExternal, reportProblem } from './lib/export';
   import { parseRouteHref, type RouteAction } from './lib/route-href';
   import {
-    addAnnotation, captureSelection, listAnnotations, newId, paintAnnotations,
+    addAnnotation, annotationsProblem, captureSelection, listAnnotations, newId, paintAnnotations,
     paintPending, clearPending, greekRange, englishRange,
     copySelectionPlain, copySelectionWithCitation, CROSS_COLUMN, PALETTE,
     extractCleanText, greekCiteForRange, segCiteForRange,
     type Annotation, type AnnStyle, type AnnColor, type CaptureResult,
   } from './lib/annotations';
   import { paintEmphasis } from './lib/emphasis-paint';
+  import { importLoadProblems } from './lib/imports';
   import { onMount, onDestroy, tick } from 'svelte';
 
   export let dataLayer: DataLayerInfo;
@@ -128,7 +130,7 @@
     scrollTo({ top: 0 });
     if (opts.loc) {
       const [col, ln] = opts.loc.split(':');
-      armJumpVerifier(col, Number(ln));
+      armJumpVerifier(col, ln);
     }
   }
 
@@ -137,7 +139,9 @@
   // strand the view at the top. Verify the target actually made it on screen
   // and correct instantly if not — never fight a scroll that succeeded.
   let jumpSeq = 0;
-  function armJumpVerifier(col: string, line: number) {
+  // `line` is the citation's line as written, letter and all ("11a"): it is
+  // spliced straight into the anchor id, and Number('11a') is NaN.
+  function armJumpVerifier(col: string, line: string) {
     const seq = ++jumpSeq;
     const check = (attempt: number) => {
       if (seq !== jumpSeq) return;             // superseded by a newer jump
@@ -168,8 +172,8 @@
     }
   }
 
-  function onBekkerJump(book: number, column: string, line: number) {
-    nav(workId, book, { loc: `${column}:${line}` });
+  function onBekkerJump(book: number, column: string, line: number, sub?: string) {
+    nav(workId, book, { loc: `${column}:${lineRef(line, sub)}` });
   }
 
   // ── Live citation tracking for the rail ───────────────────────────────────
@@ -196,9 +200,9 @@
   let lexicon: { slug: string | null } | null = null;
   function openLexicon(slug: string | null = null) { lexicon = { slug }; }
   function closeLexicon() { lexicon = null; }
-  function lexiconJump(work: string, book: number, column: string, line: number, surface: string) {
+  function lexiconJump(work: string, book: number, column: string, line: number, surface: string, sub?: string) {
     closeLexicon();
-    nav(work, book, { loc: `${column}:${line}`, hlg: surface });
+    nav(work, book, { loc: `${column}:${lineRef(line, sub)}`, hlg: surface });
   }
   function onEsc(e: KeyboardEvent) {
     // The palette binds Escape itself (bubble). Capture would close the
@@ -396,8 +400,16 @@
   };
   let annTransShown = '';       // single active translation id (mono) or 'compare'
   let annShown: string[] = [];  // translation id(s) actually rendered — for paint/panel
+  // Works whose annotations file could not be read, already announced —
+  // once per work, not on every repaint.
+  const annProblemShown = new Set<string>();
   async function refreshAnnotations() {
     annotations = [...await listAnnotations(workId)];
+    const annProblem = annotationsProblem(workId);
+    if (annProblem && !annProblemShown.has(workId)) {
+      annProblemShown.add(workId);
+      showToast(annProblem, 15000);
+    }
     annTransShown = activeTrans();
     annShown = shownTranslations(annTransShown);
     paintAnnotations(annotations, annShown);
@@ -434,6 +446,10 @@
     window.addEventListener('contextmenu', onReaderContextMenu, true);
     window.addEventListener('mousedown', onReaderMouseDownCapture, true);
     document.addEventListener('copy', onDocumentCopy, true);
+    // Stored translations loadImports() could not read at startup: say so
+    // here rather than let them vanish from the picker unexplained.
+    const problems = importLoadProblems();
+    if (problems.length) showToast(problems.join(' '), 15000);
   });
   onDestroy(() => {
     window.removeEventListener('contextmenu', onReaderContextMenu, true);
@@ -522,11 +538,16 @@
    * dance: capture happens right at mouseup (or at context-menu open), before
    * any focus change, so there's no selection-clearing hazard. */
   async function applyMark(cap: CaptureResult, style: AnnStyle) {
-    await addAnnotation({
-      id: newId(), work: workId, created: new Date().toISOString(),
-      body: '', layer: cap.layer, target: cap.target, exact: cap.exact,
-      style, color,
-    });
+    try {
+      await addAnnotation({
+        id: newId(), work: workId, created: new Date().toISOString(),
+        body: '', layer: cap.layer, target: cap.target, exact: cap.exact,
+        style, color,
+      });
+    } catch (e) {
+      showToast(`Highlight not saved: ${errorText(e)}`, 10000);
+      return;
+    }
     // Deliberately keep the selection alive: in armed mode instant-apply would
     // otherwise consume it, leaving right-click (Copy with citation, etc.)
     // nothing to act on. It clears itself on the next click.
@@ -643,11 +664,17 @@
   async function saveNote() {
     if (!noteEditor) return;
     const { work, cap, text } = noteEditor;
-    await addAnnotation({
-      id: newId(), work, created: new Date().toISOString(),
-      body: text.trim(), layer: cap.layer, target: cap.target, exact: cap.exact,
-      style: tool === 'note' ? 'highlight' : tool, color,
-    });
+    try {
+      await addAnnotation({
+        id: newId(), work, created: new Date().toISOString(),
+        body: text.trim(), layer: cap.layer, target: cap.target, exact: cap.exact,
+        style: tool === 'note' ? 'highlight' : tool, color,
+      });
+    } catch (e) {
+      // The editor stays open with the text intact — nothing was written.
+      showToast(`Note not saved: ${errorText(e)}`, 10000);
+      return;
+    }
     noteEditor = null;
     _pendingSelRect = null;
     clearPending();
@@ -863,17 +890,17 @@
   // the citation of the top visible line; format it properly and copy.
   let toast = '';
   let toastTimer: ReturnType<typeof setTimeout> | undefined;
-  function showToast(msg: string) {
+  function showToast(msg: string, ms = 3500) {
     toast = msg;
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => (toast = ''), 3500);
+    toastTimer = setTimeout(() => (toast = ''), ms);
   }
 
   function currentCitation(): string | null {
     if (!meta) return null;
     const hash = decodeURIComponent(location.hash.slice(1));
     // Only hashes that are actual citations count (not #ch-… chapter targets).
-    const isCite = busse ? /^p?\d+/.test(hash) : (!!parseBekker(hash) || /^\d{3,4}[ab]$/.test(hash));
+    const isCite = busse ? /^p?\d+/.test(hash) : !!parseCitation(hash);
     if (!hash || !isCite) return null;
     // An imported translation carries its own full bibliographic citation
     // (stored with the import, or composed from translator/year/source if
@@ -930,7 +957,7 @@
       const summary = await exportLibrary();
       if (summary) showToast(`Library exported — ${summary}`);
     } catch (e) {
-      showToast(`Export failed: ${e instanceof Error ? e.message : e}`);
+      showToast(`Export failed: ${errorText(e)}`);
     }
   }
   function doReport() {
@@ -988,7 +1015,10 @@
     if (!(a instanceof HTMLAnchorElement)) return;
     const href = a.getAttribute('href') ?? '';
     if (a.download) return;                     // CSV export, etc.
-    const action = parseRouteHref(href);
+    // The parser runs before preventDefault: if it ever threw, the webview
+    // would follow the raw href and navigate away — so a throw swallows.
+    let action: RouteAction;
+    try { action = parseRouteHref(href); } catch { action = { kind: 'swallow' }; }
     if (action.kind === 'passthrough') return;
     e.preventDefault();
     void applyRoute(action);

@@ -80,7 +80,12 @@ def check_offsets(offsets: dict, segments: list[dict]) -> dict:
                     f"seg {i} ({seg['id']}): base delta {actual - base[i]} != "
                     f"token count {count}"
                 )
-            expected_runs = [[line["n"], len(line["tokens"])] for line in seg["lines"]]
+            expected_runs = [
+                [line["n"], len(line["tokens"]), line["sub"]]
+                if line.get("sub")
+                else [line["n"], len(line["tokens"])]
+                for line in seg["lines"]
+            ]
             if coords[i]["line_runs"] != expected_runs:
                 problems.append(
                     f"seg {i} ({seg['id']}): line_runs do not match stage3 lines "
@@ -368,9 +373,16 @@ def validate(manifest: Manifest, spine: dict, english: dict, alignment: dict) ->
     for seg in segments:
         if seg["column"] not in seen_cols:
             seen_cols.append(seg["column"])
-    # busse: the spine's own columns ARE the expected set (no a/b pairing).
-    expected = list(seen_cols) if busse else column_range(
-        manifest.first_column, manifest.last_column)
+    # busse: no a/b pairing, so the expected set is the a-side pages from the
+    # manifest's first_column to its last. Taking the spine's own columns as the
+    # expectation (as this did) made `missing`/`extra` empty by construction —
+    # the check passed however many Busse pages the export had dropped.
+    if busse:
+        first_page, _ = column_key(manifest.first_column)
+        last_page, _ = column_key(manifest.last_column)
+        expected = [f"{p}a" for p in range(first_page, last_page + 1)]
+    else:
+        expected = column_range(manifest.first_column, manifest.last_column)
     missing = sorted(set(expected) - set(seen_cols), key=column_key)
     extra = sorted(set(seen_cols) - set(expected), key=column_key)
     keys = [column_key(c) for c in seen_cols]
@@ -463,11 +475,15 @@ def validate(manifest: Manifest, spine: dict, english: dict, alignment: dict) ->
         if glen and elen:
             ratios.append((seg["id"], elen / glen, glen, elen))
     vals = [r[1] for r in ratios]
-    mean, sd = statistics.mean(vals), statistics.stdev(vals)
+    # statistics.stdev needs two points and mean needs one: a work (or a partial
+    # build) whose English aligns to fewer than two columns must not crash the
+    # gate before it can report the alignment failure that caused it.
+    mean = statistics.mean(vals) if vals else 0.0
+    sd = statistics.stdev(vals) if len(vals) > 1 else 0.0
     outliers = [
         {"id": rid, "ratio": round(r, 3), "greek_chars": g, "english_chars": e}
         for rid, r, g, e in ratios
-        if abs(r - mean) > 1.5 * sd
+        if sd and abs(r - mean) > 1.5 * sd
     ]
     report["checks"]["length_ratio"] = {
         "mean": round(mean, 3),
@@ -485,6 +501,7 @@ def validate(manifest: Manifest, spine: dict, english: dict, alignment: dict) ->
         eng_text_by_col[c["column"]] += c["text"]
     greek_base_by_col = {c: _base(t) for c, t in greek_text_by_col.items()}
     proper_names = [tuple(p) for p in manifest.data.get("proper_names", [])]
+    col_pos = {c: i for i, c in enumerate(expected)}
     name_results = []
     for grc, eng_name in proper_names:
         grc_cols = {c for c, t in greek_base_by_col.items() if grc in t}
@@ -493,7 +510,13 @@ def validate(manifest: Manifest, spine: dict, english: dict, alignment: dict) ->
         # begun late in one column is often translated as overflowing the
         # boundary; allow +/- one column of slack.
         def near(col, others):
-            i = expected.index(col)
+            # A column outside the manifest's declared range has no neighbours
+            # to be near, so the name is reported as one-sided (and the check
+            # fails) — `expected.index` raised ValueError out of validate()
+            # instead, crashing stage 2 before it could write its report.
+            i = col_pos.get(col)
+            if i is None:
+                return False
             window = set(expected[max(0, i - 1) : i + 2])
             return bool(window & others)
 
