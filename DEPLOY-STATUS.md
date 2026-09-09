@@ -13,6 +13,84 @@ The env var is `PUBLIC_SHOW_PRIVATE` (unset or `0` = private translations hidden
 
 **Before committing an app-only deploy, restore every live file the local `build/dist` does not have.** `rsync --delete` stages them for deletion and the count alone will not tell you: read the deletions BY CATEGORY. Two are known — `data/reports` (76 of 88 files, pipeline output, untracked, caught 2026-08-19) and `data/Meta/quotations.json` (generated in the quirky-sanderson worktree on 2026-08-22 and never landed in the main checkout, caught 2026-08-30). Both are restored with `git checkout HEAD -- <path>` inside the gh-pages clone. Expect a third: anything a past deploy built in a worktree lives only on the live site.
 
+## 2026-09-09 — DEPLOYED: the catch-up branch, corpus rebuild and the lettered-line repair
+
+`gh-pages 5f358186 → 5a112c42`, source `a2b15077f8` on `claude/weekly-usage-catchup-h8go43`
+(not merged to main; `origin/main` was still `8e55062` — the merge-base — with nothing on it
+that this branch lacked, so the branch-not-main precondition held).
+
+Command: `npm run deploy -- --allow-data-deletions=data/ngrams/english`.
+
+**That flag was for this deploy only. Do not make it the habitual invocation** — it switches off
+the protection that caught the files below.
+
+Diff: 7,330 files — 7 A / 7,307 M / 12 D / 4 R. The 7,307 modifications are expected: the English
+index now carries word positions, so every `search/` file moves. Deletions were the 7 superseded
+`_astro` bundles plus 5 stale files, deliberately let through:
+
+- `data/ngrams/english/_.json` and its four `occ/_-*.json` companions. The `_` shard is the bucket
+  for phrases not starting a–z (`stage8_ngrams._shard_letter`). It held 1,862 phrases, every one
+  opening with an apostrophe. This branch made the page's apostrophe fold like a typed one, so all
+  1,862 re-bucketed into the letter shards and the build stopped emitting `_` entirely. Restoring
+  it — the script's default — would have left the site answering apostrophe-initial phrase searches
+  out of an index built by the old code, with the old offsets and no word positions. Verified 404
+  on live after the deploy.
+
+**The corpus rebuild ran and passed**, which resolves the two gates the 2026-09-07 note flagged as
+possibly-red:
+
+- **The Isagoge's stage 2 passed** (`columns=ok`). Its Busse column check now compares against the
+  manifest's declared range rather than the spine against itself; the export is not missing a page.
+- **The link gate failed the first build**, correctly, on a real regression — see below. It reports
+  `0 broken` on what shipped.
+- All 41 works `overall: PASS`; preflight clean; shared LSJ verified (14,047 entries / 24 shards,
+  63,261 referenced keys, all resolve).
+
+### The regression the link gate caught, and the three commits that fixed it
+
+GA column 775a is the only place in the corpus where a Bekker line has no unlettered member: the
+TLG source prints `11a`, `11b`, `11c` and no bare `11`. (Of 38 duplicate-line-number groups in the
+corpus, the other 37 keep an unlettered first record.) The branch's lettered-line work gave those
+their own anchors, but the consumers that address a line by number were not all updated.
+
+- `dc848396fb` — the lemma deep link carries the letter; the link gate's `loc` pattern widened from
+  `(\d+)` to `(\d+[a-z]?)`, because it had been *skipping* lettered citations rather than failing
+  them — a check that declines to look reports green on a link it never verified.
+- `06682bae3b` — the printed citation now says what the link does. Round one moved the href and
+  left the text reading `775a11`, so three chips said the same thing and went to three different
+  lines. Found by adversarial review (Grok), confirmed on the built page.
+- `a2b15077f8` — search and the reader's snap-to-nearest can both see a lettered line. Search read
+  `line.n` and dropped the suffix, so Physics 244b5a printed and linked as `244b5` — a real but
+  different line, so the reader was sent one line up silently. The snap matched only ids ending in
+  a digit, so a citation of `775a11` landed on line 10. Both rules now live in `lib/data` beside
+  `lineRef` (`lineAtPosition`, `nearestLineAnchor`) because neither was testable inside a
+  component. Found by adversarial review (Codex).
+
+Verified on live: `lemma/gyne` links `775a:11a` / `775a:11c` and prints `775a11a` / `775a11c`
+(0 bare `775a:11` links remain); `GA/book/4` emits `L775a-11a/-11b/-11c`. Sitewide before deploy:
+417,900 lemma citations, 212 lettered, 0 where the label disagrees with its link.
+
+Post-deploy checks, all as expected (Pages published ~130 s after push): 200 on `/`, `/EN/book/1/`,
+`/lemma/logos/`, `/data/lsj-heads.json`, `/data/Meta/quotations.json`, `/data/reports/quality_EN.json`,
+the new `_astro/Reader.CPccYIWj.js` and `_astro/global.jhbSq3zm.css`; 404 on `/bonitz/`, all 7
+superseded bundles, and the 5 deleted ngram files.
+
+### Known and NOT fixed by this deploy
+
+Four residual lettered-line defects, all desktop-only or cosmetic, from the same Codex review:
+annotation capture rejects a lettered line id (no highlight or note on one); the scroll tracker
+cannot turn a lettered anchor into a citation, so the URL and saved position go stale; both copy
+formatters emit the anchor's hyphen (`775a-11a`), which Bekker Jump then cannot parse; and the
+command palette's separate citation parser rejects `775a11a` that Bekker Jump accepts. Also
+unchanged: the snap still ignores a wrapped continuation line's `-c` id, as it did before.
+
+The LSJ forms-block audit was run and is a finding, recorded in HANDOFF-LSJ: `tables lost 208`
+against an expected ~123, and 5 entries reported as losing characters. The 5 are benign — the only
+absent text is the renderer's own `${forms.rows} forms` disclosure label, which those entries no
+longer get because they are prose now; the dictionary text is identical. The 208 is unexplained and
+is John's call, and it blocks nothing here: `shared/lib/html.ts` renders no LSJ entry on the
+website, only in the desktop app.
+
 ## Pending on `claude/weekly-usage-catchup-h8go43` — NOT deployed (2026-09-07)
 
 Fifteen commits, all tests green (shared 441, app 8, desktop 464, workbench 1,829, pipeline 255, scripts 27), nothing built or deployed: the session ran in a container with no `build/dist`, no TLG, and no network. What each piece needs before it is live:
