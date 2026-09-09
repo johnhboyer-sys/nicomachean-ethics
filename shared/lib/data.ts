@@ -287,6 +287,45 @@ export function lineAnchor(column: string, n: number, sub?: string): string {
   return `L${column}-${lineRef(n, sub)}`;
 }
 
+// The line a token index falls on, letter and all. Search used to read `line.n`
+// here and drop the suffix, so a hit on GA 775a11a was printed and linked as
+// "775a11" — a line that column does not have.
+export function lineAtPosition(seg: Segment, pos: number): { n: number; sub?: string } {
+  let count = 0;
+  for (const line of seg.greek) {
+    if (pos < count + line.tokens.length) return { n: line.n, sub: line.sub };
+    count += line.tokens.length;
+  }
+  const last = seg.greek[seg.greek.length - 1];
+  return { n: last?.n ?? 1, sub: last?.sub };
+}
+
+// The anchor a citation should land on when the exact line is not in the page.
+// Two rules, both learned from GA 775a (which prints 11a/11b/11c and no bare
+// 11): a lettered id is a candidate — matching only ids ending in a digit
+// skipped the whole group and snapped a citation of "775a11" back to line 10 —
+// and on a tie the earlier line wins, so a bare citation resolves to the first
+// sub-line of its own number rather than to a neighbour the same distance away.
+export function nearestLineAnchor(ids: Iterable<string>, column: string, line: number): string | null {
+  const prefix = `L${column}-`;
+  let best: string | null = null;
+  // Rank each candidate by distance, then by whether it carries a letter (an
+  // unlettered line wins a tie), then by the letter itself, so a bare citation
+  // lands on the first sub-line of its own number.
+  let bestRank: [number, number, string] = [Infinity, 0, ''];
+  for (const id of ids) {
+    if (!id.startsWith(prefix)) continue;
+    const m = /^(\d+)([a-z]?)$/.exec(id.slice(prefix.length));
+    if (!m) continue;
+    const rank: [number, number, string] = [Math.abs(Number(m[1]) - line), m[2] ? 1 : 0, m[2]];
+    const better = rank[0] !== bestRank[0] ? rank[0] < bestRank[0]
+      : rank[1] !== bestRank[1] ? rank[1] < bestRank[1]
+      : rank[2] < bestRank[2];
+    if (best === null || better) { best = id; bestRank = rank; }
+  }
+  return best;
+}
+
 // Resolve a parsed citation to the book that owns it. For a column shared by
 // two books (a book that starts mid-column) the line picks the right one,
 // snapping to the nearer book if the line falls in the gap between them.

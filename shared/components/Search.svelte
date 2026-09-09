@@ -24,6 +24,8 @@
     fetchChapters,
     fetchLemmaPickerShard,
     fetchLemmaGlosses,
+    lineAtPosition,
+    lineRef,
     type Segment,
     type ChapterRef,
     type LemmaCandidate,
@@ -663,18 +665,16 @@
     };
   }
 
-  // Bekker line number of the token at index `pos` within a segment.
-  function lineOfPosition(seg: Segment, pos: number): number {
-    let count = 0;
-    for (const line of seg.greek) {
-      if (pos < count + line.tokens.length) return line.n;
-      count += line.tokens.length;
-    }
-    return seg.greek[seg.greek.length - 1]?.n ?? 1;
-  }
+  // Bekker line of the token at index `pos` — see lineAtPosition in lib/data.
+  // It carries the lettered line's suffix, which this component used to drop:
+  // a hit on GA 775a11a was printed and linked as "775a11", a line that column
+  // does not have.
 
-  // Approximate Bekker line of the earliest English match (for chapter grouping).
-  function englishLine(seg: Segment, terms: string[]): number {
+  // Approximate Bekker line of the earliest English match (for chapter
+  // grouping). Approximate in WHICH line it picks — but the line it picks is
+  // named in full, suffix included, or the jump URL cites a line that is not
+  // in the column.
+  function englishLine(seg: Segment, terms: string[]): { n: number; sub?: string } {
     const text = seg.english?.text ?? '';
     let earliest = -1;
     for (const t of terms) {
@@ -684,9 +684,9 @@
       if (m && (earliest < 0 || m.index < earliest)) earliest = m.index;
     }
     const lines = seg.greek;
-    if (earliest < 0 || !lines.length) return lines[0]?.n ?? 1;
+    if (earliest < 0 || !lines.length) return { n: lines[0]?.n ?? 1, sub: lines[0]?.sub };
     const idx = Math.min(lines.length - 1, Math.floor(earliest / Math.max(1, text.length) * lines.length));
-    return lines[idx].n;
+    return { n: lines[idx].n, sub: lines[idx].sub };
   }
 
   // Instances a result contributes (mirrors how `buildGroups` adds them): one
@@ -742,8 +742,8 @@
     if (ctx.grkQuery) qs.set('hlg', ctx.grkQuery);
     if (ctx.engQuery) qs.set('hle', ctx.engQuery);
     const base = qs.toString();
-    const jumpFor = (work: string, book: number, column: string, line: number) =>
-      `${BASE_URL}${workPath(work, book)}?${base}${base ? '&' : ''}loc=${column}:${line}`;
+    const jumpFor = (work: string, book: number, column: string, line: number, sub?: string) =>
+      `${BASE_URL}${workPath(work, book)}?${base}${base ? '&' : ''}loc=${column}:${lineRef(line, sub)}`;
 
     for (const r of results) {
       const seg = segMap.get(`${r.work}:${r.meta.id}`);
@@ -760,7 +760,7 @@
           const pos = r.grkPositions[i];
           if (ctx.grkAccentTerms.length
             && !accentTokenMatch(toks[pos] ?? '', ctx.grkAccentTerms)) continue;
-          const line = lineOfPosition(seg, pos);
+          const { n: line, sub } = lineAtPosition(seg, pos);
           const ch = lookup(seg.column, line);
           // r.grammar runs parallel to grkPositions on a grammatical search.
           // Where the parse doesn't settle the reading, say so on the hit
@@ -771,13 +771,13 @@
                 .map(([cat, vals]) => `${cat} ${vals.join(' or ')}`)
                 .join(' · ')
             : undefined;
-          add(r.work, r.meta.book, ch, { lang: 'grk', column: seg.column, line, ref: `${seg.column}${line}`, html: greekKwic(seg, [pos]), jumpUrl: jumpFor(r.work, r.meta.book, seg.column, line), oneOf });
+          add(r.work, r.meta.book, ch, { lang: 'grk', column: seg.column, line, ref: `${seg.column}${lineRef(line, sub)}`, html: greekKwic(seg, [pos]), jumpUrl: jumpFor(r.work, r.meta.book, seg.column, line, sub), oneOf });
         }
       }
       if (r.engMatch) {
-        const line = englishLine(seg, ctx.engTerms);
+        const { n: line, sub } = englishLine(seg, ctx.engTerms);
         const ch = lookup(seg.column, line);
-        add(r.work, r.meta.book, ch, { lang: 'eng', column: seg.column, line, ref: seg.column, html: englishKwic(seg, ctx.engTerms), jumpUrl: jumpFor(r.work, r.meta.book, seg.column, line) });
+        add(r.work, r.meta.book, ch, { lang: 'eng', column: seg.column, line, ref: seg.column, html: englishKwic(seg, ctx.engTerms), jumpUrl: jumpFor(r.work, r.meta.book, seg.column, line, sub) });
       }
     }
 

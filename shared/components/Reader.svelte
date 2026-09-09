@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy, tick } from 'svelte';
   import { fade } from 'svelte/transition';
-  import { fetchBook, parseBekker, lineAnchor, lineRef, fetchSidenotes, fetchFigures, fetchQuotations, type Segment, type GreekLine, type Token, type BookData, type OverlayPiece, type Quotation } from '../lib/data';
+  import { fetchBook, parseBekker, lineAnchor, lineRef, nearestLineAnchor, fetchSidenotes, fetchFigures, fetchQuotations, type Segment, type GreekLine, type Token, type BookData, type OverlayPiece, type Quotation } from '../lib/data';
   import { greekFold } from '../lib/search';
   import { measureGreekTrack as measureTrack } from '../lib/greek-track';
   import { highlightPrefixMatches } from '../lib/text';
@@ -1017,16 +1017,15 @@
           // Snap to the nearest existing line in the column if the exact
           // citation line isn't a Greek line break (e.g. mid-line citations).
           if (!el && locCol && !Number.isNaN(locLine)) {
+            // nearestLineAnchor sees lettered lines. Matching /-(\d+)$/ here
+            // did not: GA 775a prints 11a/11b/11c and no bare 11, so a
+            // citation of "775a11" skipped the whole group and snapped back to
+            // line 10 — a confidently wrong line, which is worse than none.
             const seg = document.getElementById(`col-${locCol}`);
-            let best: Element | null = null;
-            let bestDist = Infinity;
-            seg?.querySelectorAll('.greek-line').forEach((node) => {
-              const m = node.id.match(/-(\d+)$/);
-              if (!m) return;
-              const d = Math.abs(Number(m[1]) - locLine);
-              if (d < bestDist) { bestDist = d; best = node; }
-            });
-            if (best) { el = best as HTMLElement; targetId = (best as HTMLElement).id; }
+            const ids = [...(seg?.querySelectorAll('.greek-line') ?? [])].map((n) => n.id);
+            const near = nearestLineAnchor(ids, locCol, locLine);
+            const bestEl = near ? document.getElementById(near) : null;
+            if (bestEl) { el = bestEl; targetId = near as string; }
           }
           if (el) { suppressArmUntil = Date.now() + 1500; el.scrollIntoView({ behavior: 'smooth', block: 'center' }); }
         } else if (hash) {
