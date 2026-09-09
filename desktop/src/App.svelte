@@ -6,7 +6,7 @@
   // Reader needs no desktop-specific changes.
   import Reader from '@shared/components/Reader.svelte';
   import { getWork, bookLabel, visibleTranslations } from '@shared/lib/works';
-  import { invalidateBookCache } from '@shared/lib/data';
+  import { invalidateBookCache, lineRef } from '@shared/lib/data';
   import { parseCitation } from '@shared/lib/palette';
   import { entryByDataId } from './lib/corpus';
   import { isTauri, errorText, type DataLayerInfo } from './lib/runtime';
@@ -130,7 +130,7 @@
     scrollTo({ top: 0 });
     if (opts.loc) {
       const [col, ln] = opts.loc.split(':');
-      armJumpVerifier(col, Number(ln));
+      armJumpVerifier(col, ln);
     }
   }
 
@@ -139,7 +139,9 @@
   // strand the view at the top. Verify the target actually made it on screen
   // and correct instantly if not — never fight a scroll that succeeded.
   let jumpSeq = 0;
-  function armJumpVerifier(col: string, line: number) {
+  // `line` is the citation's line as written, letter and all ("11a"): it is
+  // spliced straight into the anchor id, and Number('11a') is NaN.
+  function armJumpVerifier(col: string, line: string) {
     const seq = ++jumpSeq;
     const check = (attempt: number) => {
       if (seq !== jumpSeq) return;             // superseded by a newer jump
@@ -170,8 +172,8 @@
     }
   }
 
-  function onBekkerJump(book: number, column: string, line: number) {
-    nav(workId, book, { loc: `${column}:${line}` });
+  function onBekkerJump(book: number, column: string, line: number, sub?: string) {
+    nav(workId, book, { loc: `${column}:${lineRef(line, sub)}` });
   }
 
   // ── Live citation tracking for the rail ───────────────────────────────────
@@ -198,9 +200,9 @@
   let lexicon: { slug: string | null } | null = null;
   function openLexicon(slug: string | null = null) { lexicon = { slug }; }
   function closeLexicon() { lexicon = null; }
-  function lexiconJump(work: string, book: number, column: string, line: number, surface: string) {
+  function lexiconJump(work: string, book: number, column: string, line: number, surface: string, sub?: string) {
     closeLexicon();
-    nav(work, book, { loc: `${column}:${line}`, hlg: surface });
+    nav(work, book, { loc: `${column}:${lineRef(line, sub)}`, hlg: surface });
   }
   function onEsc(e: KeyboardEvent) {
     // The palette binds Escape itself (bubble). Capture would close the

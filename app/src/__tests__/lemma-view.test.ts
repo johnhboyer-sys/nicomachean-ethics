@@ -4,7 +4,7 @@
 // silent: a bar of zero width, a book heading that says "1" instead of "Α", a
 // deep link that lands at the top of the book instead of on the line.
 import { describe, expect, it } from 'vitest';
-import { buildWorksView, freqBarPct, instanceHref, type WorkInstances } from '../lib/lemma-view';
+import { buildWorksView, freqBarPct, instanceHref, instanceLabel, type WorkInstances } from '../lib/lemma-view';
 
 const chapter = (n: number) => ({
   chapter: '1',
@@ -48,6 +48,29 @@ describe('instanceHref', () => {
 
   it('omits the suffix when the line has none', () => {
     expect(instanceHref('', 'GA', 4, ['775a', 12, 'x'])).toBe('/GA/book/4?hlg=x&loc=775a:12');
+  });
+});
+
+// The citation the page PRINTS beside the link. These must agree: the first fix
+// moved the href to 775a:11a and left the label reading "775a11", so a lemma
+// with tokens on 11a/11b/11c rendered three chips that all said "775a11" and
+// went to three different lines — a silent wrong answer, worse than the broken
+// link it replaced.
+describe('instanceLabel', () => {
+  it('prints the letter the link navigates to', () => {
+    expect(instanceLabel(['775a', 11, 'gunaixin', 'a'])).toBe('775a11a');
+    expect(instanceLabel(['775a', 11, 'x', 'c'])).toBe('775a11c');
+  });
+
+  it('prints a plain line unchanged', () => {
+    expect(instanceLabel(['1094a', 5, 'x'])).toBe('1094a5');
+  });
+
+  it('agrees with the href for the same instance', () => {
+    const inst = ['775a', 11, 'x', 'b'] as const;
+    const href = instanceHref('', 'GA', 4, [...inst]);
+    expect(href).toContain(`loc=775a:11b`);
+    expect(instanceLabel([...inst])).toBe('775a11b');
   });
 
   // workPath clamps to the work's real book range, so a stale book number for a

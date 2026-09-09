@@ -46,6 +46,13 @@ export const instanceHref = (
 ): string =>
   `${base}${workPath(work, book)}?hlg=${encodeURIComponent(surface)}&loc=${col}:${lineRef(line, sub)}`;
 
+// The citation as the page prints it beside that link. It has to be built from
+// the same parts as the href: printing the bare line while the link carried the
+// letter rendered three chips all reading "775a11" that went to three different
+// lines — a wrong answer that looks right.
+export const instanceLabel = ([col, line, , sub]: Instance): string =>
+  `${col}${lineRef(line, sub)}`;
+
 // Scale each work's count against the most-frequent work so the bars are
 // directly comparable at a glance. The floor of 2% keeps a single occurrence
 // visible as a bar rather than as nothing at all.

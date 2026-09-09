@@ -13,7 +13,7 @@ import Pwa from './Pwa.astro';
 import ThemeToggle from './ThemeToggle.astro';
 import { workLanding } from '@shared/lib/works';
 import { jsonLdSafe } from '../lib/jsonld';
-import { buildWorksView, instanceHref, type Instance, type WorkInstances } from '../lib/lemma-view';
+import { buildWorksView, instanceHref, instanceLabel, type Instance, type WorkInstances } from '../lib/lemma-view';
 import '@shared/styles/global.css';
 
 interface Props { slug: string; }
@@ -245,7 +245,7 @@ const breadcrumb = Astro.site ? {
                         </div>
                         <ul class="fb-citelist">
                           {ch.instances.map((inst) => (
-                            <li><a href={instHref(w.work, bk.book, inst)}>{inst[0]}{inst[1]}</a></li>
+                            <li><a href={instHref(w.work, bk.book, inst)}>{instanceLabel(inst)}</a></li>
                           ))}
                         </ul>
                       </div>
@@ -267,7 +267,7 @@ const breadcrumb = Astro.site ? {
                           </div>
                           <ul class="fb-citelist">
                             {ch.instances.map((inst) => (
-                              <li><a href={instHref(w.work, bk.book, inst)}>{inst[0]}{inst[1]}</a></li>
+                              <li><a href={instHref(w.work, bk.book, inst)}>{instanceLabel(inst)}</a></li>
                             ))}
                           </ul>
                         </div>
