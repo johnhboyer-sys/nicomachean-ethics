@@ -18,6 +18,8 @@ import {
   parseNameStatus,
   parseRsyncItemized,
   scanForLeaks,
+  scanGatedSlots,
+  auditDistScale,
   verificationTargets,
   verifyLive,
 } from '../deploy-gh-pages.mjs';
@@ -270,9 +272,100 @@ test('parseNameStatus reads git diff --cached --name-status', () => {
 
 test('parseArgs accepts the documented flags and rejects anything else', () => {
   const o = parseArgs(['--dry-run', '--remote=git@github.com:x/y.git', '--dist=/tmp/site', '--allow-data-deletions', '--verify']);
-  assert.deepEqual(o, { dryRun: true, remote: 'git@github.com:x/y.git', dist: '/tmp/site', allowDataDeletions: ['data'], verify: true, skipLinkCheck: false, help: false });
+  assert.deepEqual(o, { dryRun: true, remote: 'git@github.com:x/y.git', dist: '/tmp/site', allowDataDeletions: ['data'], minPagesRatio: 0.5, verify: true, skipLinkCheck: false, help: false });
   assert.deepEqual(parseArgs([]).allowDataDeletions, []);
+  assert.equal(parseArgs([]).minPagesRatio, 0.5);
+  assert.equal(parseArgs(['--min-pages-ratio=0']).minPagesRatio, 0);
+  assert.equal(parseArgs(['--min-pages-ratio=0.9']).minPagesRatio, 0.9);
+  assert.throws(() => parseArgs(['--min-pages-ratio=2']), /number from 0 to 1/);
+  assert.throws(() => parseArgs(['--min-pages-ratio=x']), /number from 0 to 1/);
   assert.deepEqual(parseArgs(['--allow-data-deletions=data/APo,data/reports']).allowDataDeletions, ['data/APo', 'data/reports']);
   assert.throws(() => parseArgs(['--allow-data-deletions=lemma']), /must be data or lie under data\//);
   assert.throws(() => parseArgs(['--force']), /Unknown option: --force/);
+});
+
+// ── The leak check's second half: gated translation SLOTS ───────────────────
+// scanForLeaks matches translators' surnames, so gated prose that never names
+// its translator passes it — and the "Aristotle" control only proves the scan
+// opened the files. This is the structural half: a gated work (one with a
+// -public.yaml) serves a known set of translation slots, and a slot appearing
+// that the baseline does not list is a leak whatever the prose says.
+
+test('scanGatedSlots passes when a gated work serves exactly its baseline slots', () => {
+  const r = scanGatedSlots(
+    [{ path: 'data/Cat/book-01.json', text: JSON.stringify({ segments: [{ ross: 'x', overlays: { a: 1 } }] }) }],
+    { gated: new Set(['Cat']), baseline: { Cat: ['overlays', 'ross'] } },
+  );
+  assert.equal(r.ok, true);
+  assert.deepEqual(r.problems, []);
+});
+
+test('scanGatedSlots fails on a slot the baseline does not list', () => {
+  const r = scanGatedSlots(
+    [{ path: 'data/Cat/book-01.json', text: JSON.stringify({ segments: [{ ross: 'x', third: 'Ackrill prose' }] }) }],
+    { gated: new Set(['Cat']), baseline: { Cat: ['ross'] } },
+  );
+  assert.equal(r.ok, false);
+  assert.match(r.problems[0], /Cat.*third/);
+});
+
+// The point of the structural check: it does not read the prose at all, so it
+// catches gated text whose translator is never named — the exact case
+// scanForLeaks cannot see.
+test('scanGatedSlots catches a leak with no translator name anywhere in it', () => {
+  const text = JSON.stringify({ segments: [{ third: 'Every art and every inquiry seems to aim at some good.' }] });
+  assert.equal(scanForLeaks([{ path: 'data/Cat/book-01.json', text: text + 'Aristotle' }]).problems.length, 0);
+  const r = scanGatedSlots([{ path: 'data/Cat/book-01.json', text }], { gated: new Set(['Cat']), baseline: { Cat: [] } });
+  assert.equal(r.ok, false);
+});
+
+test('scanGatedSlots ignores works that are not gated', () => {
+  // EN is not gated and legitimately serves `third`; Cat is here so the check
+  // is actually running (an empty scan is its own failure, below).
+  const r = scanGatedSlots(
+    [
+      { path: 'data/EN/book-01.json', text: JSON.stringify({ segments: [{ third: 'x' }] }) },
+      { path: 'data/Cat/book-01.json', text: JSON.stringify({ segments: [{ ross: 'x' }] }) },
+    ],
+    { gated: new Set(['Cat']), baseline: { Cat: ['ross'] } },
+  );
+  assert.equal(r.ok, true, r.problems.join('; '));
+  assert.deepEqual(r.seen, { Cat: ['ross'] });
+});
+
+test('scanGatedSlots refuses to pass when it saw no gated work at all', () => {
+  // Same failure mode the "Aristotle" positive control exists for: a scan that
+  // examined nothing must not report clean.
+  const r = scanGatedSlots([], { gated: new Set(['Cat']), baseline: { Cat: [] } });
+  assert.equal(r.ok, false);
+  assert.match(r.problems[0], /no gated work/i);
+});
+
+// ── The partial-dist floor ─────────────────────────────────────────────────
+// A dist holding one empty index.html passed every default gate, and the rsync
+// then deleted the reader pages, the lemma pages and the bundles. Only a
+// wholly empty dist was refused.
+
+test('auditDistScale accepts a dist the same size as live', () => {
+  assert.equal(auditDistScale(6612, 6609, 0.5).ok, true);
+});
+
+test('auditDistScale accepts ordinary growth and ordinary trimming', () => {
+  assert.equal(auditDistScale(7000, 6609, 0.5).ok, true);
+  assert.equal(auditDistScale(5000, 6609, 0.5).ok, true);
+});
+
+test('auditDistScale refuses a dist that lost most of the live pages', () => {
+  const r = auditDistScale(1, 6609, 0.5);
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /1 page/);
+  assert.match(r.reason, /6609/);
+});
+
+test('auditDistScale is a no-op against an empty live branch (first deploy)', () => {
+  assert.equal(auditDistScale(3, 0, 0.5).ok, true);
+});
+
+test('auditDistScale can be overridden deliberately', () => {
+  assert.equal(auditDistScale(1, 6609, 0).ok, true);
 });

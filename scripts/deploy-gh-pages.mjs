@@ -7,7 +7,8 @@
 //   npm run deploy:dry     — everything up to the commit; nothing leaves this machine
 //
 // Flags: --dry-run  --remote=<url>  --dist=<path>
-//        --allow-data-deletions[=<prefix>[,<prefix>]]  --verify  --skip-link-check  --help
+//        --allow-data-deletions[=<prefix>[,<prefix>]]  --min-pages-ratio=<0..1>
+//        --verify  --skip-link-check  --help
 //
 // The pure functions are exported so scripts/__tests__/deploy-gh-pages.test.mjs
 // can exercise them without a clone, a dist or a network.
@@ -18,6 +19,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
+const MANIFESTS = path.join(ROOT, 'manifests');
 
 export const LIVE_BASE = 'https://johnhboyer-sys.github.io/aristotle-reader';
 export const BRANCH = 'gh-pages';
@@ -69,12 +71,20 @@ export function parseArgs(argv) {
     remote: null,
     dist: null,
     allowDataDeletions: [],
+    // Fraction of the live page count the dist must reach. Half is far below
+    // any real trim and far above a broken build.
+    minPagesRatio: 0.5,
     verify: false,
     skipLinkCheck: false,
     help: false,
   };
   for (const arg of argv) {
     if (arg === '--dry-run') options.dryRun = true;
+    else if (arg.startsWith('--min-pages-ratio=')) {
+      const v = Number(arg.slice('--min-pages-ratio='.length));
+      if (!Number.isFinite(v) || v < 0 || v > 1) throw new Error('--min-pages-ratio= needs a number from 0 to 1');
+      options.minPagesRatio = v;
+    }
     else if (arg === '--allow-data-deletions') options.allowDataDeletions = ['data'];
     else if (arg.startsWith('--allow-data-deletions=')) options.allowDataDeletions = parseDataPrefixes(arg.slice('--allow-data-deletions='.length));
     else if (arg === '--verify') options.verify = true;
@@ -187,6 +197,75 @@ export function auditDataDeletions(deleted, liveFiles, allowedPrefixes = []) {
     else restore.push(p);
   }
   return { restore, delete: del };
+}
+
+// The translation slots a gated work is expected to serve. A work is gated
+// when manifests/<Work>-public.yaml exists: the public build keeps some of its
+// slots and drops the copyright-encumbered ones. Read from the corpus as
+// deployed on 2026-09-09; a slot appearing that is not listed here fails the
+// deploy until a human has read it in context and extended this list, exactly
+// as KNOWN_BENIGN works for the names.
+export const GATED_SLOT_BASELINE = {
+  Cat: ['overlays', 'ross'],
+  EE: [],
+  Int: ['overlays', 'ross'],
+  Meta: [],
+  Pol: ['ross'],
+};
+const TRANSLATION_SLOTS = ['ross', 'secondary', 'third', 'overlays'];
+
+// The structural half of the leak check. scanForLeaks matches the translators'
+// SURNAMES, so gated prose that never names its translator passes it clean —
+// and the "Aristotle" positive control only proves the scan opened the files,
+// not that it can recognise a translation. This reads no prose at all: for a
+// gated work it asks which translation slots the served data actually carries
+// and fails on any the baseline does not list.
+export function scanGatedSlots(files, { gated, baseline = GATED_SLOT_BASELINE } = {}) {
+  const problems = [];
+  const seen = new Map();          // work -> Set of slots found
+  let gatedFilesScanned = 0;
+  for (const { path: filePath, text } of files) {
+    const m = /^data\/([^/]+)\/book-\d+\.json$/.exec(filePath);
+    if (!m || !gated.has(m[1])) continue;
+    gatedFilesScanned++;
+    let doc;
+    try { doc = JSON.parse(text); } catch { problems.push(`${filePath}: not JSON — cannot check its translation slots`); continue; }
+    for (const segment of doc?.segments ?? []) {
+      if (!segment || typeof segment !== 'object') continue;
+      for (const slot of TRANSLATION_SLOTS) {
+        if (segment[slot] === undefined || segment[slot] === null) continue;
+        (seen.get(m[1]) ?? seen.set(m[1], new Set()).get(m[1])).add(slot);
+      }
+    }
+  }
+  for (const [work, slots] of seen) {
+    const allowed = new Set(baseline[work] ?? []);
+    for (const slot of [...slots].sort()) {
+      if (!allowed.has(slot)) {
+        problems.push(`${work} serves the "${slot}" translation slot, which GATED_SLOT_BASELINE does not list — read it in context before deploying; a gated translation reaches live through this slot whether or not its translator is named.`);
+      }
+    }
+  }
+  // A check that examined nothing must not report clean — the lesson the
+  // "Aristotle" control was added for on 2026-09-01.
+  if (gatedFilesScanned === 0) {
+    problems.unshift(`no gated work was scanned: none of ${[...gated].join(', ') || '(none known)'} had a data/<Work>/book-*.json in the clone — this check is not running.`);
+  }
+  return { ok: problems.length === 0, gatedFilesScanned, seen: Object.fromEntries([...seen].map(([w, s]) => [w, [...s].sort()])), problems };
+}
+
+// A dist holding one empty index.html passed every default gate, and the rsync
+// then deleted the reader pages, the lemma pages and the bundles: only a wholly
+// EMPTY dist was refused. Compare the page counts instead. `floor` is the
+// fraction of the live page count the dist must reach (0 disables the gate).
+export function auditDistScale(distPages, livePages, floor) {
+  if (!livePages || floor <= 0) return { ok: true };
+  const minimum = Math.ceil(livePages * floor);
+  if (distPages >= minimum) return { ok: true };
+  return {
+    ok: false,
+    reason: `the dist has ${distPages} page(s) against ${livePages} live — below the ${Math.round(floor * 100)}% floor (${minimum}). A partial build would delete most of the live site. Rebuild, or pass --min-pages-ratio=<0..1> if the shrink is deliberate.`,
+  };
 }
 
 // `needle` is never empty (LEAK_NAMES and POSITIVE_CONTROL are literals).
@@ -478,6 +557,18 @@ async function main() {
     const liveSha = git(['rev-parse', '--short=8', 'HEAD'], { cwd: clone });
     console.log(`  ${BRANCH} at ${liveSha} in ${clone}`);
 
+    // Scale floor, BEFORE the rsync can delete anything. A dist holding one
+    // empty index.html used to pass every gate here — the link checker accepts
+    // a single page with no links — and the rsync then deleted the reader
+    // pages, the lemma pages and the bundles. Only a wholly empty dist was
+    // refused. Compare the page counts instead.
+    const countHtml = (dir) => { let n = 0; for (const _ of walk(dir, (name) => name.toLowerCase().endsWith('.html'), dir)) n++; return n; };
+    const distPages = countHtml(dist);
+    const livePages = countHtml(clone);
+    const scale = auditDistScale(distPages, livePages, options.minPagesRatio);
+    console.log(`  pages: ${distPages} in the dist, ${livePages} live (floor ${Math.round(options.minPagesRatio * 100)}%)`);
+    if (!scale.ok) fail(scale.reason);
+
     // 3. rsync dry run, deletions by category ------------------------------
     heading('rsync dry run — deletions BY CATEGORY');
     const rsyncArgs = ['-a', '--delete', '--exclude=.git', '--exclude=.DS_Store', `${dist}${path.sep}`, `${clone}${path.sep}`];
@@ -521,6 +612,30 @@ async function main() {
     if (!leak.ok) {
       for (const problem of leak.problems) console.log(`  !! ${problem}`);
       fail('leak check did not pass.');
+    }
+
+    // The structural half. The scan above matches the translators' SURNAMES,
+    // so gated prose that never names its translator passes it clean. This
+    // reads no prose: it asks which translation slots each gated work's served
+    // data carries, and fails on any the baseline does not list.
+    const gatedWorks = new Set(
+      readdirSync(MANIFESTS)
+        .filter((name) => name.endsWith('-public.yaml'))
+        .map((name) => name.slice(0, -'-public.yaml'.length)),
+    );
+    // A fresh walk, not `dataFiles`: readAll is a generator and the scan above
+    // has already drained it. Re-walking keeps both passes streaming rather
+    // than buffering the whole corpus in memory.
+    const slots = scanGatedSlots(
+      readAll(walk(dataDir, (name) => name.toLowerCase().endsWith('.json'), clone)),
+      { gated: gatedWorks },
+    );
+    console.log(`  gated works (a -public.yaml exists): ${[...gatedWorks].join(', ') || '(none)'}`);
+    console.log(`  gated book files scanned: ${slots.gatedFilesScanned}`);
+    for (const [work, found] of Object.entries(slots.seen)) console.log(`    ${work}: ${found.join(', ')}`);
+    if (!slots.ok) {
+      for (const problem of slots.problems) console.log(`  !! ${problem}`);
+      fail('gated translation slots did not pass.');
     }
 
     // 6. Stage and read the deploy diff by category ------------------------
