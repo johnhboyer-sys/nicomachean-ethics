@@ -102,9 +102,20 @@ shared with other checkouts and can hold a different revision).
    pasted CR in `[ENGLISH.PARA]` breaking the row count; and an autosave
    flush racing the write loop so the last edit was never written. 30 new
    tests (1,829 green). Still open, reported not fixed: `TauriStorage.write`
-   is truncate-and-write, not write-then-rename (needs `fs:allow-rename`),
-   and `ChapterEditor.svelte`'s `reassignDocumentAddresses` overwrites a
-   source-ref work's addresses with ordinals on any split or merge.
+   is truncate-and-write, not write-then-rename (needs `fs:allow-rename` in
+   this package's capabilities — the desktop app's stores were converted on
+   the catch-up branch and its grant added, the Workbench's were not; also
+   listed as item 5 of `desktop/TODO.md`, because the two stores are the same
+   code).
+
+   `ChapterEditor.svelte`'s `reassignDocumentAddresses` — **corrected
+   2026-09-09**, this entry used to say the fix had not been made. It WAS made
+   for the source-ref case on the catch-up branch (merged as PR #110), but the
+   fix is unreachable today: every splice caller gates on a paragraph row unit,
+   which `source-ref` is not. So nothing exercises it, and nothing regresses if
+   it is wrong. When that gate opens, this is the code that decides whether an
+   imported work keeps its citations — reach it with a test before trusting
+   it.
    Re-import Physics from the disc, type one character, quit, reopen: the
    outline must still show eight books.
 4. **Built 2026-09-07, untested in the .app**: the Add work… dialog's dead end.
